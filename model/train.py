@@ -1,8 +1,11 @@
 # Обучение прогноза выработки: факт турбин + архив прогнозов погоды → три квантильные модели (p10, p50, p90),
 # самопроверка времени, проверка на месяце проверки так, как работает агент, артефакты и отчёт report.md.
 
+import argparse
 import json
 import logging
+import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -43,6 +46,14 @@ MODEL_PARAMS = {
 # Независимый тест: месяц, на котором версия модели не выбиралась, и папка с его отчётом.
 INDEPENDENT_TEST_MONTH = "2025-12"
 INDEPENDENT_TEST_DIR = "model/artifacts_dec2025"
+
+
+def _strict_mode() -> bool:
+    """WEATHER_STRICT=1: строгий режим погоды в model/weather.py (разбор переменной тот же). Меняет только
+    get_issued_forecast, то есть проверку: на D+1 прогноз previous_day2 (48 ч), на D+2 previous_day3 (72 ч).
+    Обучение от него не зависит."""
+    return os.environ.get("WEATHER_STRICT", "0").strip() in ("1", "true", "yes")
+
 
 PERIOD_NAMES = {
     "before": f"до {CLOCK_CHANGE}",
@@ -311,7 +322,18 @@ def write_report(path: Path, m: dict) -> None:
     month = m["validation_month"]
     per = al["periods"]
     L = []
+    strict = m.get("weather_strict", False)
     L.append("# Прогноз выработки ветростанции: как обучена модель и как она проверена\n")
+    if strict:
+        L.append("Это проверка в строгом режиме (WEATHER_STRICT=1). Прогноз погоды для проверки взят на сутки "
+                 "старее, чем в основной: на D+1 с упреждением 48 ч (previous_day2), на D+2 с упреждением 72 ч "
+                 "(previous_day3). Так проверяется, что прогноз не опирается на запуск погодной модели, который "
+                 "в момент выпуска мог быть ещё недоступен. Модель та же, что в основной проверке: обучение "
+                 "строгий режим не меняет, те же данные, признаки и параметры. Давность прогноза модель видит "
+                 "как признак: 2 для D+1 и 3 для D+2. Давности 3 в обучении не было, для модели она "
+                 "равнозначна давности 2. Дни в таблицах ниже календарные: день 1 это D+1, день 2 это D+2. "
+                 f"Основная проверка в {ARTIFACTS}/report.md. Из этой папки удалены модели и validation.csv, "
+                 "оставлены только metrics.json и report.md.\n")
     L.append("## Метод\n")
     L.append("Задача: для каждой из двух турбин дать прогноз средней за час выработки на 48 часов вперёд, "
              "начиная с полуночи следующего дня. Выработка везде нормирована: 0 означает ноль, 1 означает "
@@ -336,11 +358,13 @@ def write_report(path: Path, m: dict) -> None:
              "а выработка зависит ещё от порывов и плотности воздуха (температура и давление). Бустинг "
              "находит такие поправки сам по истории. Кривая мощности оставлена рядом как точка отсчёта и "
              "как запасной предсказатель, если обученных моделей нет.\n")
+    issued_text = ("строгий режим, сервис previous-runs Open-Meteo: на завтра прогноз двухсуточной давности, "
+                   "на послезавтра трёхсуточной" if strict else
+                   "сервис previous-runs Open-Meteo: на завтра прогноз предыдущих суток, на "
+                   "послезавтра прогноз двухсуточной давности")
     L.append("Проверка устроена так же, как работает агент. Месяц проверки в обучение не входил. Для каждой "
              f"даты выпуска с {v['issue_dates'][0]} по {v['issue_dates'][1]} взят прогноз погоды, известный в "
-             "день выпуска (сервис previous-runs Open-Meteo: на завтра прогноз предыдущих суток, на "
-             "послезавтра прогноз двухсуточной давности). По нему построен прогноз выработки и сравнён с "
-             "фактом.\n")
+             f"день выпуска ({issued_text}). По нему построен прогноз выработки и сравнён с фактом.\n")
     L.append("Рядом посчитаны две точки отсчёта. Persistence: «завтра и послезавтра будет как сегодня», "
              "для даты выпуска D берётся факт дня D в тот же час. Кривая мощности: выработка по прогнозу "
              "ветра на 100 м через кривую, построенную по обучающим часам архива прогнозов.\n")
@@ -596,6 +620,10 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None,
     month_start = pd.Timestamp(first_day, tz=TZ)
     weather_end = last_day.strftime("%Y-%m-%d")
     log.info("Старт обучения: история с %s, месяц проверки %s, артефакты в %s", train_start, month, art)
+    strict = _strict_mode()
+    if strict:
+        log.info("Строгий режим WEATHER_STRICT=1: обучение обычное, в проверке прогноз на D+1 с упреждением "
+                 "48 ч (previous_day2), на D+2 с упреждением 72 ч (previous_day3)")
 
     # 1. Факт турбин и фильтр.
     hourly = load_hourly()
@@ -711,6 +739,7 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None,
     metrics = {
         "train_start": train_start,
         "validation_month": month,
+        "weather_strict": strict,
         "data": data,
         "weather": weather_info,
         "time_alignment": alignment,
@@ -730,10 +759,63 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None,
     return metrics
 
 
-def main() -> None:
+class _Parser(argparse.ArgumentParser):
+    """argparse, который о неверных флагах пишет по-русски и без трейсбека."""
+
+    def error(self, message: str) -> None:
+        self.exit(2, f"Ошибка в флагах запуска: {message}\n{self.format_usage()}"
+                     "Подробнее: python -m model.train --help\n")
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = _Parser(prog="python -m model.train", add_help=False,
+                     description="Обучение трёх квантильных моделей и проверка на месяце проверки «как агент».")
+    parser.add_argument("-h", "--help", action="help", help="показать эту справку и выйти")
+    parser.add_argument("--validation-month", default=VALIDATION_MONTH, metavar="ГГГГ-ММ",
+                        help=f"месяц проверки, в обучение не входит (по умолчанию {VALIDATION_MONTH})")
+    parser.add_argument("--artifacts-dir", default=ARTIFACTS, metavar="ПАПКА",
+                        help=f"куда сохранить модели, metrics.json и report.md (по умолчанию {ARTIFACTS})")
+    parser.add_argument("--train-start", default=TRAIN_START, metavar="ГГГГ-ММ-ДД",
+                        help=f"первый день истории для обучения (по умолчанию {TRAIN_START})")
+    args = parser.parse_args(argv)
+
+    if not re.fullmatch(r"\d{4}-\d{2}", args.validation_month):
+        parser.error(f"--validation-month должен быть месяцем в виде ГГГГ-ММ, например {VALIDATION_MONTH}; "
+                     f"получено: {args.validation_month!r}")
+    try:
+        month_start = pd.Period(args.validation_month, freq="M").start_time
+    except ValueError:
+        parser.error(f"--validation-month: такого месяца нет: {args.validation_month!r}")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.train_start):
+        parser.error(f"--train-start должен быть датой в виде ГГГГ-ММ-ДД, например {TRAIN_START}; "
+                     f"получено: {args.train_start!r}")
+    try:
+        start = pd.Timestamp(args.train_start)
+    except ValueError:
+        parser.error(f"--train-start: такой даты нет: {args.train_start!r}")
+    if start >= month_start:
+        parser.error(f"--train-start {args.train_start} должен быть раньше начала месяца проверки "
+                     f"{args.validation_month}: учиться не на чем")
+    if not args.artifacts_dir.strip():
+        parser.error("--artifacts-dir не может быть пустым")
+    # В строгом режиме метрики и отчёт боевой папки перезаписались бы числами строгой проверки.
+    if _strict_mode() and Path(args.artifacts_dir).resolve() == Path(ARTIFACTS).resolve():
+        parser.error(f"при WEATHER_STRICT=1 укажите --artifacts-dir, отличную от боевой {ARTIFACTS}, "
+                     "иначе отчёт основной проверки будет перезаписан строгим")
+    return args
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
-    train()
+    try:
+        train(train_start=args.train_start, artifacts_dir=args.artifacts_dir,
+              validation_month=args.validation_month)
+    except (ValueError, RuntimeError) as e:
+        # Наши ошибки (нет данных за период, нет кэша погоды без сети) уже объяснены по-русски.
+        log.error("Обучение остановлено: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,8 @@ REQUIRED_WEATHER = ["ws10", "ws100", "gust10", "dir100", "temp2m", "pressure"]
 
 def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
     """Из погодного ряда (индекс time, WEATHER_COLUMNS) делает таблицу с колонками FEATURES,
-    индекс time сохраняется. Лишние колонки входа (lead_hours, source и прочие) не используются."""
+    индекс time сохраняется. Давность прогноза берётся из lead_day, lead_hours_weather или lead_hours
+    (первая найденная); прочие лишние колонки входа (source и другие) не используются."""
     if weather is None or len(weather) == 0:
         raise ValueError("Пустой погодный ряд: признаки строить не из чего")
     missing = [c for c in REQUIRED_WEATHER if c not in weather.columns]
@@ -47,9 +48,15 @@ def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
 
     out["turbine"] = turbine
 
-    # Давность прогноза в сутках: 0 — архив самых свежих прогнозов, 1 — прогноз на завтра, 2 — на послезавтра.
+    # Давность прогноза в сутках: 0 — архив самых свежих прогнозов, 1 — прогноз за сутки, 2 — за двое суток.
+    # Источники по порядку: колонка lead_day (история previous-runs в обучении); lead_hours_weather — часы
+    # упреждения самого погодного прогноза (24, 48 или 72), у модели важнее давность прогноза, чем
+    # календарный день (в строгом режиме WEATHER_STRICT=1 на завтра берётся прогноз за двое суток, это 2);
+    # и только потом lead_hours — часы от полуночи дня выпуска (24..47 → 1, 48..71 → 2).
     if "lead_day" in weather.columns:
         lead = pd.to_numeric(weather["lead_day"], errors="coerce").fillna(0).astype(int)
+    elif "lead_hours_weather" in weather.columns:
+        lead = (pd.to_numeric(weather["lead_hours_weather"], errors="coerce").fillna(0) // 24).astype(int)
     elif "lead_hours" in weather.columns:
         lead = (pd.to_numeric(weather["lead_hours"], errors="coerce").fillna(0) // 24).astype(int)
     else:

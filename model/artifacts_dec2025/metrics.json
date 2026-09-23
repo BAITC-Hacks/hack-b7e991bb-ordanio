@@ -1,6 +1,7 @@
 {
   "train_start": "2023-03-11",
   "validation_month": "2025-12",
+  "weather_strict": false,
   "data": {
     "hours_total": 48767,
     "removed_incomplete_hours": 120,
@@ -161,7 +162,7 @@
       "validation_fraction": 0.1,
       "random_state": 0
     },
-    "train_seconds": 14.159702125001786,
+    "train_seconds": 21.458980208000867,
     "iterations": {
       "q10": 266,
       "q50": 300,
@@ -442,5 +443,5 @@
       }
     }
   },
-  "total_seconds": 21.637508208001236
+  "total_seconds": 37.31974983300097
 }
