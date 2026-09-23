@@ -610,6 +610,14 @@ function buildChartSvg(data) {
 const CHANGE_THRESHOLD = 0.15;
 let changesRequestId = 0;   // защита от гонки: показываем только ответ на последний запрос
 
+// Склонение: 1 час, 2 часа, 5 часов, 11 часов, 21 час
+function hoursWord(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "час";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "часа";
+  return "часов";
+}
+
 // «2026-02-28» → «2026-02-27»
 function previousDay(date) {
   const d = new Date(date + "T00:00:00Z");
@@ -654,7 +662,7 @@ async function renderChanges(date, rows) {
   const before = pairs.reduce((sum, p) => sum + p.yesterday, 0);
   const after = pairs.reduce((sum, p) => sum + p.today, 0);
   const delta = after - before;
-  html += `<p>Пересчитано ${changed} часов из ${pairs.length}, сумма p50 за сутки изменилась на ${(delta > 0 ? "+" : "") + delta.toFixed(2)} (было ${before.toFixed(2)}, стало ${after.toFixed(2)})</p>`;
+  html += `<p>Пересчитано ${changed} ${hoursWord(changed)} из ${pairs.length}, сумма p50 за сутки изменилась на ${(delta > 0 ? "+" : "") + delta.toFixed(2)} (было ${before.toFixed(2)}, стало ${after.toFixed(2)})</p>`;
   box.innerHTML = html;
 }
 
