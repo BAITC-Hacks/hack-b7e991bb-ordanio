@@ -663,34 +663,56 @@ function validationTable(v) {
       У persistence коридора нет.</div>`;
 }
 
-// Итоговая фраза собирается из чисел metrics: слова зависят от того, кто точнее.
-function validationVerdict(overall) {
-  const model = Number(get(overall, "model", "mae"));
-  const curve = Number(get(overall, "power_curve", "mae"));
-  const persistence = Number(get(overall, "persistence", "mae"));
-  const modelWidth = Number(get(overall, "model", "mean_width_p10_p90"));
-  const curveWidth = Number(get(overall, "power_curve", "mean_width_p10_p90"));
-  const parts = [];
-  if (Number.isFinite(model) && Number.isFinite(curve) && curve > 0) {
-    const gap = Math.abs(model - curve) / curve;
-    const verb = gap < 0.05 ? "на январе близки по ошибке"
-      : model < curve ? "на январе различаются: модель точнее" : "на январе различаются: кривая мощности точнее";
-    parts.push(`Модель и кривая мощности ${verb} (MAE ${num(model)} против ${num(curve)})`);
+// Итоговая фраза собирается из чисел metrics: слова зависят от того, кто точнее и насколько.
+function validationVerdict(v) {
+  const overall = get(v, "overall");
+  const n = (...keys) => { const x = get(overall, ...keys); return x === null || x === undefined ? NaN : Number(x); };
+  const model = n("model", "mae");
+  const curve = n("power_curve", "mae");
+  const persistence = n("persistence", "mae");
+  const modelWidth = n("model", "mean_width_p10_p90");
+  const curveWidth = n("power_curve", "mean_width_p10_p90");
+  const modelCov = n("model", "coverage_p10_p90");
+  const curveCov = n("power_curve", "coverage_p10_p90");
+  const pct = (x) => (x * 100).toFixed(1) + " %";
+  if (!Number.isFinite(model) || !Number.isFinite(curve)) return "";
+
+  // Модель против кривой мощности
+  const diff = curve - model;
+  let text;
+  if (Math.abs(diff) < 0.005) {
+    text = `Модель и кривая мощности на январе близки по ошибке (MAE ${num(model)} против ${num(curve)})`;
+  } else if (diff > 0) {
+    const betterIn = (day) => {
+      const m = Number(get(v, "by_lead_day", day, "model", "mae"));
+      const c = Number(get(v, "by_lead_day", day, "power_curve", "mae"));
+      return Number.isFinite(m) && Number.isFinite(c) && m < c;
+    };
+    const where = betterIn("day1") && betterIn("day2") ? "во всех срезах" : "в сумме за 48 часов";
+    text = `Модель точнее кривой мощности по ветру ${where} (MAE ${num(model)} против ${num(curve)})`;
+  } else {
+    text = `Кривая мощности по ветру на январе точнее модели (MAE ${num(curve)} против ${num(model)})`;
   }
-  if (Number.isFinite(model) && Number.isFinite(persistence) && model > 0) {
-    const ratio = persistence / model;
-    parts.push(ratio >= 1
-      ? `модель в ${ratio.toFixed(1)} раза точнее persistence (${num(persistence)})`
-      : `persistence точнее модели (${num(persistence)} против ${num(model)})`);
+
+  // Модель против persistence
+  if (Number.isFinite(persistence) && model > 0) {
+    text += `, в ${(persistence / model).toFixed(1)} раза точнее persistence (${num(persistence)})`;
   }
+
+  // Ширина коридора
   if (Number.isFinite(modelWidth) && Number.isFinite(curveWidth)) {
-    const word = modelWidth < curveWidth ? "более узкий" : modelWidth > curveWidth ? "более широкий" : "такой же";
-    parts.push(`${parts.length ? "и даёт " : "Модель даёт "}${word} коридор (${num(modelWidth)} против ${num(curveWidth)})`);
+    const dw = modelWidth - curveWidth;
+    const word = Math.abs(dw) < 0.005 ? "такой же по ширине" : dw < 0 ? "более узкий" : "более широкий";
+    text += ` и даёт ${word} коридор (${num(modelWidth, 2)} против ${num(curveWidth, 2)})`;
   }
-  if (!parts.length) return "";
-  // Последняя часть присоединяется через «и», остальные через запятую.
-  let text = parts[0];
-  for (let i = 1; i < parts.length; i++) text += (i === parts.length - 1 && parts[i].startsWith("и ") ? " " : ", ") + parts[i];
+
+  // Покрытие коридора: цель 80 %
+  if (Number.isFinite(modelCov)) {
+    if (modelCov > 0.82) text += `; коридор шире нужного: факт внутри ${pct(modelCov)} часов при цели 80 %`;
+    else if (modelCov < 0.78) text += `; коридор уже нужного: факт внутри ${pct(modelCov)} часов при цели 80 %`;
+    else text += `; факт внутри коридора ${pct(modelCov)} часов при цели 80 %`;
+    if (Number.isFinite(curveCov)) text += `, у кривой ${pct(curveCov)}`;
+  }
   return text + ".";
 }
 
@@ -706,7 +728,7 @@ function renderValidation(data) {
     <li>Месяц проверки ${formatMonth(metrics.validation_month)} в обучение не входил</li>
     <li>Дат выпуска в проверке: ${countOrDash(v.n_issue_dates)}</li>
   </ul>`;
-  const verdict = validationVerdict(v.overall);
+  const verdict = validationVerdict(v);
   if (verdict) html += `<p class="note">${verdict}</p>`;
   if (data && data.report) {
     html += `<details class="report"><summary>Полный отчёт модели</summary><pre>${escapeHtml(data.report)}</pre></details>`;

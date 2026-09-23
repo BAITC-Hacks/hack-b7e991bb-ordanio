@@ -94,12 +94,14 @@ def template_note(analysis: dict) -> str:
             f"часов, где оценка сдвинулась больше чем на 0.15: {delta['hours_changed_over_threshold']}."
         )
     low = analysis["low_confidence_count"]
+    threshold = _threshold_text(analysis)
     if low == 0:
-        parts.append("Часов низкой уверенности нет.")
+        parts.append(f"Часов низкой уверенности нет ({threshold}).")
     else:
         first = analysis["low_confidence_hours"][0]
         parts.append(f"Часов низкой уверенности: {low} из {analysis['hours'] * len(analysis['turbines'])}, "
-                     f"первый из них {first['target_time'][:16]} (турбина {first['turbine']}, {first['reason']}).")
+                     f"{threshold}; первый из них {first['target_time'][:16]} "
+                     f"(турбина {first['turbine']}, {first['reason']}).")
     ext = analysis["extreme_wind_hours"]
     if ext:
         parts.append(f"Часов с ветром выше 25 м/с: {len(ext)}; на эти часы турбины остановлены, "
@@ -111,6 +113,12 @@ def template_note(analysis: dict) -> str:
         parts.append(f"Вчерашний прогноз на {err['day']} разошёлся с фактом в среднем на {err['mae']:.3f} "
                      f"(смещение {err['bias']:+.3f}), факт попал в коридор p10–p90 в {err['coverage_p10_p90'] * 100:.0f}% часов.")
     return " ".join(parts)
+
+
+def _threshold_text(analysis: dict) -> str:
+    """Порог низкой уверенности словами; текст общий с журналом (agent.tools.threshold_text)."""
+    from agent.tools import threshold_text
+    return threshold_text(analysis)
 
 
 # ---------------------------------------------------------------- чат с инструментами

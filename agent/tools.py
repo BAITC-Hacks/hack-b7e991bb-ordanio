@@ -11,7 +11,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from common.config import HORIZON_HOURS, OUTPUT, TURBINES, TZ
+from common.config import ARTIFACTS, HORIZON_HOURS, OUTPUT, TURBINES, TZ
 from model.features import build_features
 from model.predict import predict
 from model.weather import get_issued_forecast
@@ -28,8 +28,67 @@ JOURNAL_PATH = os.path.join(OUTPUT, "journal.md")
 
 CUTOUT_WS100 = 25.0        # м/с: выше турбина штатно останавливается
 DELTA_P50_LOW = 0.15       # порог изменения p50 к вчерашнему прогнозу
-WIDTH_LOW = 0.7            # порог ширины коридора p90 − p10: «хуже обычного», около четверти часов (решение штаба 23.09)
+WIDTH_LOW_FALLBACK = 0.8   # запасной порог ширины коридора p90 − p10, если январской проверки модели нет
+WIDTH_QUANTILE = 0.75      # порог ширины: 75-й процентиль ширины по validation.csv, верхняя четверть часов
+VALIDATION_PATH = os.path.join(ARTIFACTS, "validation.csv")
 NOTE_CUTOUT = "ветер выше 25 м/с: штатная остановка, выработка принята равной 0"
+
+
+# ---------------------------------------------------------------- порог ширины коридора
+
+@lru_cache(maxsize=1)
+def _width_threshold_info() -> tuple[float, str]:
+    """Порог ширины коридора и его источник ("validation" или "fallback"). Читается один раз на процесс:
+    75-й процентиль p90 − p10 по январской проверке модели; если файла нет или он негоден, запасное 0.8."""
+    reason = None
+    if not os.path.exists(VALIDATION_PATH):
+        reason = f"файла {VALIDATION_PATH} нет"
+    else:
+        try:
+            val = pd.read_csv(VALIDATION_PATH)
+            if not {"p10", "p90"} <= set(val.columns):
+                reason = f"в {VALIDATION_PATH} нет колонок p10 и p90"
+            else:
+                width = (pd.to_numeric(val["p90"], errors="coerce")
+                         - pd.to_numeric(val["p10"], errors="coerce")).dropna()
+                if width.empty:
+                    reason = f"в {VALIDATION_PATH} нет строк с p10 и p90"
+                else:
+                    value = round(float(width.quantile(WIDTH_QUANTILE)), 2)
+                    if not np.isfinite(value):
+                        reason = f"процентиль ширины по {VALIDATION_PATH} не число"
+                    else:
+                        log.info("Порог ширины коридора: %.2f, взят из %s (75-й процентиль p90 − p10 по %d строкам "
+                                 "январской проверки модели)", value, VALIDATION_PATH, len(width))
+                        return value, "validation"
+        except Exception as exc:  # битый или пустой файл не должен ронять цикл
+            reason = f"{VALIDATION_PATH} не читается ({type(exc).__name__}: {exc})"
+    log.warning("Порог ширины коридора: запасное значение %.2f, %s", WIDTH_LOW_FALLBACK, reason)
+    return WIDTH_LOW_FALLBACK, "fallback"
+
+
+def width_threshold() -> float:
+    """Порог ширины коридора p90 − p10 для низкой уверенности, округлён до 2 знаков."""
+    return _width_threshold_info()[0]
+
+
+def width_threshold_source() -> str:
+    """Откуда взят порог: "validation" (январская проверка модели) или "fallback" (запасное значение)."""
+    return _width_threshold_info()[1]
+
+
+def threshold_text(analysis: dict) -> str:
+    """Порог низкой уверенности словами, для журнала и шаблонной сводки."""
+    if "width_threshold" in analysis:
+        value, source = analysis["width_threshold"], analysis.get("width_threshold_source")
+    else:  # анализ, сохранённый до появления порога в analysis: берём порог текущего процесса
+        value, source = _width_threshold_info()
+    if source == "validation":
+        width_part = (f"ширина коридора выше {value:.2f}, это верхняя четверть часов по январской "
+                      f"проверке модели")
+    else:
+        width_part = f"ширина коридора выше {value:.2f} (запасное значение, файла январской проверки нет)"
+    return f"порог: {width_part}, либо сдвиг p50 к вчерашнему прогнозу больше {DELTA_P50_LOW}"
 
 
 # ---------------------------------------------------------------- шаги цикла
@@ -115,7 +174,7 @@ def run_model(features_by_turbine: dict[int, pd.DataFrame]) -> pd.DataFrame:
 def save_forecast(issue_date: str, forecast: pd.DataFrame, weather: pd.DataFrame,
                   previous_forecast: pd.DataFrame | None = None) -> str:
     """CSV строго по колонкам контракта: 48 часов × 2 турбины = 96 строк.
-    confidence = "low", если коридор шире 0.5 или p50 ушёл от вчерашнего прогноза больше чем на 0.15."""
+    confidence = "low", если коридор шире порога width_threshold() или p50 ушёл от вчерашнего прогноза больше чем на 0.15."""
     os.makedirs(FORECASTS_DIR, exist_ok=True)
     path = os.path.join(FORECASTS_DIR, f"forecast_{issue_date}.csv")
     issue_start = pd.Timestamp(issue_date, tz=TZ)
@@ -166,13 +225,14 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
 
     low_mask = _low_confidence_mask(forecast, previous_forecast)
     width = forecast["p90"] - forecast["p10"]
+    threshold = width_threshold()
     low_hours = []
     for (t, row), is_low, w in zip(forecast.iterrows(), low_mask, width):
         if not is_low:
             continue
         reasons = []
-        if w > WIDTH_LOW:
-            reasons.append(f"коридор {w:.2f}")
+        if w > threshold:
+            reasons.append(f"коридор {w:.2f} выше порога {threshold:.2f}")
         prev_p50 = _previous_p50(previous_forecast, t, int(row["turbine"]))
         if prev_p50 is not None and abs(float(row["p50"]) - prev_p50) > DELTA_P50_LOW:
             reasons.append(f"изменение к вчерашнему {float(row['p50']) - prev_p50:+.2f}")
@@ -206,6 +266,8 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
         "delta_vs_previous": delta,
         "low_confidence_hours": low_hours,
         "low_confidence_count": len(low_hours),
+        "width_threshold": threshold,
+        "width_threshold_source": width_threshold_source(),
         "extreme_wind_hours": extreme_hours,
         "error_yesterday": error,
     }
@@ -317,7 +379,7 @@ def _previous_p50(previous: pd.DataFrame | None, t: pd.Timestamp, turbine: int) 
 
 
 def _low_confidence_mask(forecast: pd.DataFrame, previous: pd.DataFrame | None) -> np.ndarray:
-    width_low = (forecast["p90"] - forecast["p10"]).to_numpy() > WIDTH_LOW
+    width_low = (forecast["p90"] - forecast["p10"]).to_numpy() > width_threshold()
     if previous is None:
         return width_low
     prev = previous.reset_index().set_index(["time", "turbine"])["p50"]
@@ -436,9 +498,9 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
     lines.append("")
     low = analysis["low_confidence_hours"]
     if not low:
-        lines.append("Часы низкой уверенности: нет.")
+        lines.append(f"Часы низкой уверенности: нет ({threshold_text(analysis)}).")
     else:
-        lines.append(f"Часы низкой уверенности ({len(low)}):")
+        lines.append(f"Часы низкой уверенности ({len(low)}), {threshold_text(analysis)}:")
         lines.append("")
         for h in low[:24]:
             lines.append(f"- {h['target_time'][:16]}, турбина {h['turbine']}: p50 {h['p50']:.2f}, {h['reason']}")

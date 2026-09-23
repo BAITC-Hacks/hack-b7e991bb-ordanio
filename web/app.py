@@ -193,7 +193,8 @@ async def unhandled(request: Request, exc: Exception):
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    # Без кэша: после обновления страницы эксперт не должен видеть старую версию.
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/status")
