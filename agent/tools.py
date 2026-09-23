@@ -32,7 +32,7 @@ DELTA_P50_LOW = 0.15       # порог изменения p50 к вчерашн
 WIDTH_LOW_FALLBACK = 0.8   # запасной порог ширины коридора p90 − p10, если январской проверки модели нет
 WIDTH_QUANTILE = 0.75      # порог ширины: 75-й процентиль ширины по validation.csv, верхняя четверть часов
 VALIDATION_PATH = os.path.join(ARTIFACTS, "validation.csv")
-NOTE_CUTOUT = "ветер выше 25 м/с: принята гипотеза штатной остановки турбины (паспортный порог неизвестен), выработка 0"
+NOTE_CUTOUT = "предполагаемая остановка: порог 25 м/с не подтверждён паспортом турбин"
 CUTOUT_TEXT = ("принята гипотеза штатной остановки турбин (паспортный порог и параметры турбин неизвестны), "
                "выработка принята равной 0")
 
@@ -92,6 +92,17 @@ def threshold_text(analysis: dict) -> str:
     else:
         width_part = f"ширина коридора выше {value:.2f} (запасное значение, файла январской проверки нет)"
     return f"порог: {width_part}, либо сдвиг p50 к вчерашнему прогнозу больше {DELTA_P50_LOW}"
+
+
+def cutout_text(analysis: dict) -> str:
+    """Строка про часы предполагаемой остановки, общая для журнала и шаблонной сводки."""
+    n = analysis.get("cutout_hours")
+    if n is None:  # анализ, сохранённый до появления счётчика: считаем по часам экстремального ветра
+        n = len(analysis.get("extreme_wind_hours") or [])
+    if not n:
+        return "Часов предполагаемой остановки: нет."
+    return (f"Часы предполагаемой остановки (ветер выше {CUTOUT_WS100:.0f} м/с, порог не подтверждён паспортом "
+            f"турбин): {int(n)}, все квантили приняты равными 0, уверенность low.")
 
 
 # ---------------------------------------------------------------- шаги цикла
@@ -180,37 +191,71 @@ def issue_timestamp(issue_date: str) -> pd.Timestamp:
     return pd.Timestamp(f"{issue_date} {ISSUE_TIME}", tz=TZ)
 
 
-def weather_lead_frame(issue_date: str, weather: pd.DataFrame) -> pd.DataFrame:
-    """Упреждение погоды по часам погодного ряда. Индекс time; колонки weather_source,
-    weather_lead_hours (24 для previous_day1, 48 для previous_day2, NaN, если упреждение неизвестно,
-    например источник historical_forecast) и weather_run_time (target_time − упреждение, NaT, если неизвестно).
-    Если колонки source в погоде нет, упреждение считается по дню часа относительно issue_date."""
-    index = weather.index
+def _weather_lead_from_data(weather: pd.DataFrame) -> list[float] | None:
+    """Упреждение погоды из колонки lead_hours_weather погодного ряда (её отдаёт «Модель»), если там
+    есть хотя бы одно число; нечисловые и пустые значения и часы источника historical_forecast — NaN.
+    None, если колонки нет или чисел в ней нет."""
+    if "lead_hours_weather" not in weather.columns:
+        return None
+    values = pd.to_numeric(weather["lead_hours_weather"], errors="coerce").astype(float)
+    if not np.isfinite(values.to_numpy()).any():
+        return None
+    leads = [float(v) if np.isfinite(v) else np.nan for v in values.to_numpy()]
     if "source" in weather.columns:
+        # Архив прогнозов historical_forecast: момент расчёта в нём не записан, упреждение честно неизвестно,
+        # даже если в колонке стоит номер запуска.
+        leads = [np.nan if str(src) == "historical_forecast" else lead
+                 for src, lead in zip(weather["source"], leads)]
+    return leads
+
+
+def weather_lead_frame(issue_date: str, weather: pd.DataFrame) -> pd.DataFrame:
+    """Упреждение погоды по часам погодного ряда. Индекс time; колонки weather_source, weather_lead_hours,
+    weather_run_time (target_time − упреждение, NaT, если неизвестно) и weather_lead_source.
+    Основной путь: колонка lead_hours_weather из погоды (weather_lead_source = "weather_data").
+    Запасной путь (weather_lead_source = "by_day_fallback"): по колонке source — 24 для previous_day1,
+    48 для previous_day2, NaN для historical_forecast; если нет и source, по дню часа относительно issue_date."""
+    index = weather.index
+    from_data = _weather_lead_from_data(weather)
+    if from_data is not None:
+        lead_source = "weather_data"
+        sources = (weather["source"].astype(str).tolist() if "source" in weather.columns
+                   else ["lead_hours_weather из погоды"] * len(index))
+        leads = from_data
+    elif "source" in weather.columns:
+        lead_source = "by_day_fallback"
         sources = weather["source"].astype(str).tolist()
         leads = []
         for src in sources:
             k = src[len("previous_day"):] if src.startswith("previous_day") else ""
             leads.append(24.0 * int(k) if k.isdigit() else np.nan)
     else:
+        lead_source = "by_day_fallback"
         issue_day = pd.Timestamp(issue_date).date()
         sources = ["по дню относительно выпуска"] * len(index)
         leads = [24.0 * (t.date() - issue_day).days for t in index]
     run_times = [t - pd.Timedelta(hours=lead) if np.isfinite(lead) else pd.NaT for t, lead in zip(index, leads)]
     run_time = pd.DatetimeIndex(pd.to_datetime(pd.Series(run_times, dtype=object), utc=True)).tz_convert(TZ)
     return pd.DataFrame({"weather_source": sources, "weather_lead_hours": leads,
-                         "weather_run_time": run_time}, index=index)
+                         "weather_run_time": run_time, "weather_lead_source": lead_source}, index=index)
 
 
 def attach_weather_lead(issue_date: str, forecast: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
-    """Копия прогноза с колонками weather_source, weather_lead_hours, weather_run_time по индексу time."""
-    lead = weather_lead_frame(issue_date, weather).reindex(forecast.index)
+    """Копия прогноза с колонками weather_source, weather_lead_hours, weather_run_time, weather_lead_source
+    по индексу time."""
+    frame = weather_lead_frame(issue_date, weather)
+    lead_source = str(frame["weather_lead_source"].iloc[0]) if len(frame) else "by_day_fallback"
+    lead = frame.reindex(forecast.index)
     out = forecast.copy()
     for col in ("weather_source", "weather_lead_hours", "weather_run_time"):
         out[col] = lead[col].values
+    out["weather_lead_source"] = lead_source
     hours = lead[~lead.index.duplicated(keep="first")]["weather_lead_hours"]
-    log.info("Погода: упреждение 24 ч у %d ч прогноза, 48 ч у %d ч, неизвестно у %d ч",
-             int((hours == 24).sum()), int((hours == 48).sum()), int(hours.isna().sum()))
+    counts = ", ".join(f"{int(h)} ч у {int(n)} ч прогноза"
+                       for h, n in hours.dropna().value_counts().sort_index().items())
+    log.info("Погода: упреждение %s; неизвестно у %d ч (источник упреждения: %s)",
+             counts or "нигде не известно", int(hours.isna().sum()),
+             "колонка lead_hours_weather погоды" if lead_source == "weather_data" else "запасной расчёт по дню")
     return out
 
 
@@ -218,7 +263,8 @@ def save_forecast(issue_date: str, forecast: pd.DataFrame, weather: pd.DataFrame
                   previous_forecast: pd.DataFrame | None = None) -> str:
     """CSV строго по колонкам контракта: 48 часов × 2 турбины = 96 строк. issue_timestamp — момент выпуска
     (D 23:59 местного), weather_lead_hours и weather_run_time — упреждение погоды и момент её расчёта.
-    confidence = "low", если коридор шире порога width_threshold() или p50 ушёл от вчерашнего прогноза больше чем на 0.15."""
+    confidence = "low", если коридор шире порога width_threshold(), p50 ушёл от вчерашнего прогноза больше чем на 0.15
+    или час — предполагаемая остановка (ветер выше 25 м/с, все квантили обнулены)."""
     os.makedirs(FORECASTS_DIR, exist_ok=True)
     path = os.path.join(FORECASTS_DIR, f"forecast_{issue_date}.csv")
     issue_start = pd.Timestamp(issue_date, tz=TZ)
@@ -276,13 +322,16 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
     delta = _delta_vs_previous(forecast, previous_forecast)
 
     low_mask = _low_confidence_mask(forecast, previous_forecast)
+    cutout_mask = _cutout_mask(forecast)
     width = forecast["p90"] - forecast["p10"]
     threshold = width_threshold()
     low_hours = []
-    for (t, row), is_low, w in zip(forecast.iterrows(), low_mask, width):
+    for (t, row), is_low, is_cutout, w in zip(forecast.iterrows(), low_mask, cutout_mask, width):
         if not is_low:
             continue
         reasons = []
+        if is_cutout:
+            reasons.append("предполагаемая остановка")
         if w > threshold:
             reasons.append(f"коридор {w:.2f} выше порога {threshold:.2f}")
         prev_p50 = _previous_p50(previous_forecast, t, int(row["turbine"]))
@@ -296,6 +345,13 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
     extreme = forecast[(forecast["turbine"] == min(TURBINES)) & (forecast["ws100"] > CUTOUT_WS100)]
     extreme_hours = [{"target_time": t.isoformat(), "ws100": round(float(r["ws100"]), 1)}
                      for t, r in extreme.iterrows()]
+    first_mask = (forecast["turbine"] == min(TURBINES)).to_numpy()
+    cutout_hours = int((cutout_mask & first_mask).sum())   # часов по одной турбине, как extreme_wind_hours
+    cutout_rows = int(cutout_mask.sum())                   # строк с обнулением на обе турбины
+    if "weather_lead_source" in forecast.columns and len(forecast):
+        weather_lead_source = str(forecast["weather_lead_source"].iloc[0])
+    else:
+        weather_lead_source = "by_day_fallback"
 
     error = _error_yesterday(issue_date, previous_forecast, actuals)
 
@@ -321,14 +377,18 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
         "width_threshold": threshold,
         "width_threshold_source": width_threshold_source(),
         "extreme_wind_hours": extreme_hours,
+        "cutout_hours": cutout_hours,
+        "cutout_rows": cutout_rows,
         "error_yesterday": error,
         "weather_lead_check": _weather_lead_check(issue_date, forecast),
+        "weather_lead_source": weather_lead_source,
     }
     log.info("Анализ: %s", analysis["weather_lead_check"]["text"])
     log.info(
         "Анализ: сумма p50 обеих турбин %.2f (по суткам %s), низкой уверенности %d ч, экстремального ветра %d ч, "
-        "сравнение с вчера: %s, ошибка за вчера: %s",
+        "предполагаемой остановки %d ч (%d строк), сравнение с вчера: %s, ошибка за вчера: %s",
         totals["all"]["total"], totals["all"]["by_day"], len(low_hours), len(extreme_hours),
+        cutout_hours, cutout_rows,
         "нет вчерашнего прогноза" if delta is None else f"{delta['hours']} общих часов, средний сдвиг p50 {delta['mean_delta_p50']:+.3f}",
         "нет факта" if error is None else f"MAE {error['mae']:.3f}",
     )
@@ -480,8 +540,18 @@ def _previous_p50(previous: pd.DataFrame | None, t: pd.Timestamp, turbine: int) 
     return float(sub["p50"].iloc[0])
 
 
+def _cutout_mask(forecast: pd.DataFrame) -> np.ndarray:
+    """Часы предполагаемой остановки: ветер выше 25 м/с и все три квантили обнулены (так делает run_model)."""
+    if "ws100" not in forecast.columns:
+        return np.zeros(len(forecast), dtype=bool)
+    windy = pd.to_numeric(forecast["ws100"], errors="coerce").to_numpy(dtype=float) > CUTOUT_WS100
+    zero = (forecast[["p10", "p50", "p90"]].to_numpy(dtype=float) == 0.0).all(axis=1)
+    return windy & zero
+
+
 def _low_confidence_mask(forecast: pd.DataFrame, previous: pd.DataFrame | None) -> np.ndarray:
-    width_low = (forecast["p90"] - forecast["p10"]).to_numpy() > width_threshold()
+    # Предполагаемая остановка — всегда low, независимо от ширины коридора и сдвига к вчерашнему.
+    width_low = ((forecast["p90"] - forecast["p10"]).to_numpy() > width_threshold()) | _cutout_mask(forecast)
     if previous is None:
         return width_low
     prev = previous.reset_index().set_index(["time", "turbine"])["p50"]
@@ -667,6 +737,8 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
             lines.append(f"- {_ru_time(h['target_time'])}, турбина {h['turbine']}: p50 {h['p50']:.2f}, {h['reason']}")
         if len(low) > 24:
             lines.append(f"- … и ещё {len(low) - 24}")
+    lines.append("")
+    lines.append(cutout_text(analysis))
     lines.append("")
     ext = analysis["extreme_wind_hours"]
     if ext:

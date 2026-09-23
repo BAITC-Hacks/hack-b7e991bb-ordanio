@@ -74,8 +74,10 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
             "Суммы p10 и p90 по часам — это сумма квантилей, а не интервал суточной энергии; так их и не называй.\n"
             "- Поле weather_lead_check: перескажи одной фразой его text (проверка, что вся погода предсказана не "
             "позже момента выпуска); если ok равно false, прямо скажи, что проверка не пройдена и почему.\n"
-            "- Часы extreme_wind_hours (ветер выше 25 м/с): выработка там принята равной 0 по гипотезе штатной "
-            "остановки, паспортный порог турбин неизвестен; не выдавай это за известный факт.\n"
+            "- Поле cutout_hours — часы предполагаемой остановки (ветер выше 25 м/с, порог не подтверждён "
+            "паспортом турбин): все квантили там приняты равными 0, уверенность low. Если cutout_hours больше 0, "
+            "назови их число этими словами; если 0, напиши «Часов предполагаемой остановки: нет». Не выдавай "
+            "остановку за известный факт.\n"
             "- Время и даты пиши по-человечески: «13 февраля в 22:00», «13 февраля», без формата ISO, без буквы T "
             "и без часового смещения.\n"
             "- Не упоминай служебные имена полей (issue_date, totals, delta_vs_previous, error_yesterday, "
@@ -105,7 +107,7 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
 def template_note(analysis: dict) -> str:
     """Шаблонная сводка из чисел analysis, без сети и ключа. Даты словами, суммы с двумя знаками,
     ветер и температура с одним (исходная точность прогноза погоды), без markdown."""
-    from agent.tools import _hours_word, _ru_day, _ru_time
+    from agent.tools import _hours_word, _ru_day, _ru_time, cutout_text
     days = analysis["days"]
     totals = analysis["totals"]
     w = analysis["weather"]
@@ -150,10 +152,9 @@ def template_note(analysis: dict) -> str:
         parts.append(f"Часов низкой уверенности: {low} из {analysis['hours'] * len(analysis['turbines'])}, "
                      f"{threshold}; первый из них {_ru_time(first['target_time'], sep=" в ")} "
                      f"(турбина {first['turbine']}, {first['reason']}).")
-    ext = analysis["extreme_wind_hours"]
-    if ext:
-        parts.append(f"Часов с ветром выше 25 м/с: {len(ext)}; для них принята гипотеза штатной остановки "
-                     f"турбин (паспортный порог и параметры турбин неизвестны), выработка принята равной нулю.")
+    cutout = analysis.get("cutout_hours", len(analysis.get("extreme_wind_hours") or []))
+    if cutout:
+        parts.append(cutout_text(analysis))
     err = analysis["error_yesterday"]
     if err is None:
         parts.append("Факта за вчера нет, ошибка вчерашнего прогноза не считалась.")

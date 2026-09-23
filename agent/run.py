@@ -78,7 +78,8 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None, *,
 
     step = _Step(result, "run_model")
     forecast = tools.run_model(features)
-    # Упреждение погоды (24/48 ч) и момент её расчёта по часам: из колонки source погодного ряда.
+    # Упреждение погоды и момент её расчёта по часам: из колонки lead_hours_weather погоды, если она есть,
+    # иначе запасной расчёт по колонке source (24/48 ч).
     forecast = tools.attach_weather_lead(issue_date, forecast, weather)
     step.done("p10/p50/p90 по часам, сумма p50: " + ", ".join(
         f"турбина {t} {forecast[forecast['turbine'] == t]['p50'].sum():.2f}" for t in features))
@@ -107,7 +108,8 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None, *,
     analysis["weather_source"] = source
     result.analysis = analysis
     step.done(f"сумма p50 {analysis['totals']['all']['total']:.2f}, низкой уверенности "
-              f"{analysis['low_confidence_count']} ч, экстремального ветра {len(analysis['extreme_wind_hours'])} ч")
+              f"{analysis['low_confidence_count']} ч, экстремального ветра {len(analysis['extreme_wind_hours'])} ч, "
+              f"предполагаемой остановки {analysis['cutout_hours']} ч")
 
     step = _Step(result, "note")
     result.note, result.note_source = make_note(analysis, note_mode)
