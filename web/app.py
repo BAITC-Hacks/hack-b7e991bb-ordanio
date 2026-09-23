@@ -210,6 +210,28 @@ def status():
         "modules": {"agent": module_available("agent.run"), "model": module_available("model.predict")},
         "period": list(TEST_ISSUE_DATES),
         "forecasts_done": sorted(p.stem.replace("forecast_", "") for p in FORECASTS_DIR.glob("forecast_*.csv")),
+        "model_info": model_info(),
+    }
+
+
+def model_info() -> dict | None:
+    """Когда обучена модель и на каких данных: из metrics.json, дата по времени файла."""
+    path = Path(ARTIFACTS) / "metrics.json"
+    if not path.exists():
+        return None
+    try:
+        metrics = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    data = metrics.get("data", {})
+    trained_at = dt.datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec="minutes")
+    return {
+        "trained_at": metrics.get("trained_at") or trained_at,
+        "facts_first": data.get("facts_first"),
+        "facts_last": data.get("facts_last"),
+        "train_rows": data.get("train_rows"),
+        "train_start": metrics.get("train_start"),
+        "validation_month": metrics.get("validation_month"),
     }
 
 
@@ -255,6 +277,37 @@ def run_period(from_: str | None = Query(None, alias="from"), to: str | None = Q
             log.exception("run_period(%s, %s) упал", start, end)
             raise HTTPException(500, f"Прогон периода {start}…{end} прерван: {type(exc).__name__}: {exc}")
     return jsonable(list(results))
+
+
+@app.get("/api/forecasts.csv")
+def forecasts_all_csv():
+    """Все файлы output/forecasts по порядку дат, одна шапка."""
+    files = sorted(FORECASTS_DIR.glob("forecast_*.csv"))
+    if not files:
+        raise HTTPException(404, "Прогнозов ещё нет: сначала сформируйте хотя бы один.")
+    lines = []
+    header = None
+    for path in files:
+        text = path.read_text(encoding="utf-8").splitlines()
+        if not text:
+            continue
+        if header is None:
+            header = text[0]
+            lines.append(header)
+        elif text[0] != header:
+            raise HTTPException(500, f"У файла {path.name} другая шапка, склеить нельзя.")
+        lines.extend(line for line in text[1:] if line.strip())
+    body = "\n".join(lines) + "\n"
+    return PlainTextResponse(body, media_type="text/csv",
+                             headers={"Content-Disposition": 'attachment; filename="forecasts_all.csv"'})
+
+
+@app.get("/api/journal.md")
+def journal_file():
+    """Журнал агента как файл для скачивания."""
+    if not JOURNAL_PATH.exists():
+        raise HTTPException(404, "Журнал пока пуст: агент ещё не делал ни одного прогноза.")
+    return FileResponse(JOURNAL_PATH, media_type="text/markdown", filename="journal.md")
 
 
 @app.get("/api/forecast/{issue_date}.csv")

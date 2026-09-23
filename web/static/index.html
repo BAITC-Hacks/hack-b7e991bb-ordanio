@@ -1,237 +1,266 @@
-<!-- Страница проекта: прогноз выработки двух ветротурбин на 48 часов. Запуск агента, журнал шагов, графики, таблица, проверка модели на январе, вопросы агенту. Без внешних библиотек и интернета. -->
+<!-- Страница проекта: прогноз выработки двух ветротурбин на 48 часов. Запуск агента, журнал шагов, графики, таблица, проверка модели на январе, вопросы агенту. Без внешних библиотек; шрифты IBM Plex из Google Fonts, без сети — системные. -->
 <!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Прогноз выработки ВЭС</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-  /* Единая система: цвета, шкала размеров, отступы, радиусы. Шрифт системный, без загрузок. */
+  /* Дизайн-система: палитра (раздел 2), типографика (раздел 3), сетка (раздел 4). Без сети — системные шрифты. */
   :root {
-    --bg: #f6f7f9;
-    --card: #ffffff;
-    --text: #1d2330;
-    --muted: #5d6675;
-    --line: #dde1e7;
-    --line-soft: #edf0f3;
-    --accent: #1f5fbf;
-    --accent-dark: #174a96;
-    --accent-soft: #eef3fb;
-    --band: #1f5fbf;
-    --low: #d9480f;
-    --err: #c92a2a;
-    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --fs-title: 26px;   /* заголовок страницы и крупные числа */
-    --fs-h2: 19px;      /* заголовки блоков */
-    --fs-h3: 16px;      /* подзаголовки внутри блоков */
-    --fs-body: 15px;    /* основной текст */
-    --fs-small: 13px;   /* подписи, таблицы, легенды */
-    --lh: 1.5;
-    --lh-tight: 1.3;
-    --radius: 8px;      /* карточки-блоки */
-    --radius-sm: 6px;   /* элементы внутри блоков */
-    --pad: 18px 20px;   /* внутренний отступ блока */
-    --gap: 16px;        /* расстояние между блоками */
-    --control-h: 36px;  /* высота кнопок и полей */
+    --bg: #F6F7F5;
+    --card: #FFFFFF;
+    --text: #202824;
+    --muted: #5E6B64;
+    --line: #DCE2DD;
+    --grid: #E7EBE8;
+    --accent: #276653;
+    --accent-dark: #1F5243;
+    --accent-soft: #EAF1ED;
+    --band: #276653;
+    --low: #8A5A16;
+    --low-bg: #FFF3D6;
+    --err: #A33A32;
+    --err-bg: #FBEDEA;
+    --table-head: #EEF1EE;
+    --row-hover: #F2F6F3;
+    --journal-bg: #F1F3F0;
+    --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --radius: 4px;
+    --page-pad: 32px;
+    --page-top: 32px;
+    --section-gap: 32px;
+    --section-pad: 24px;
+    --control-h: 40px;
+    --t: 140ms;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font);
-    font-size: var(--fs-body);
-    line-height: var(--lh);
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: 14px; line-height: 22px; font-weight: 400;
+    -webkit-font-smoothing: antialiased;
   }
-  button, input, textarea, select { font-family: var(--font); font-size: var(--fs-body); line-height: var(--lh); }
-  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1, h2, h3, h4 { line-height: var(--lh-tight); font-weight: 600; }
-  h1 { font-size: var(--fs-title); margin: 0 0 6px; }
-  h2 { font-size: var(--fs-h2); margin: 0 0 12px; }
-  h3 { font-size: var(--fs-h3); margin: 16px 0 8px; }
-  h4 { font-size: var(--fs-body); margin: 0 0 6px; }
+  button, input, textarea, select { font-family: var(--font); font-size: 14px; line-height: 22px; color: var(--text); }
+  main { max-width: 1240px; margin: 0 auto; padding: var(--page-top) var(--page-pad) 64px; }
+  h1 { font-size: 36px; line-height: 42px; font-weight: 500; letter-spacing: -0.02em; margin: 0; }
+  h2 { font-size: 18px; line-height: 26px; font-weight: 600; margin: 0 0 16px; }
+  h3 { font-size: 15px; line-height: 22px; font-weight: 600; margin: 24px 0 8px; }
+  h4 { font-size: 14px; line-height: 22px; font-weight: 600; margin: 0 0 4px; }
   p { margin: 12px 0 0; }
-
-  /* Все блоки одной ширины, с одинаковыми отступами, рамкой и радиусом */
-  section, .summary-card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: var(--pad);
-    margin-top: var(--gap);
-  }
+  a { color: var(--accent); text-underline-offset: 2px; transition: color var(--t); }
+  a:hover { color: var(--accent-dark); }
   .muted { color: var(--muted); }
-  .small { font-size: var(--fs-small); }
-  .tagline { color: var(--muted); }
+  .small { font-size: 12px; line-height: 18px; }
+  .hidden { display: none !important; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* Строка статуса */
-  .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  .pill {
-    display: inline-block; padding: 3px 10px; border-radius: 999px;
-    border: 1px solid var(--line); background: #fafbfc; font-size: var(--fs-small);
+  /* Шапка: название слева, дата и основная кнопка справа, под ней тонкий разделитель */
+  .topbar {
+    display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 24px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line);
   }
-  .pill.ok { border-color: #b2dfbd; background: #ebf7ee; color: #1e6b31; }
-  .pill.warn { border-color: #f0d48a; background: #fdf6e3; color: #7a5410; }
-  .pill.err { border-color: #f1b0b0; background: #fdecec; color: #9b1c1c; }
+  .subtitle { font-size: 15px; line-height: 22px; color: var(--muted); margin-top: 4px; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .controls label { font-size: 12px; line-height: 18px; color: var(--muted); font-weight: 400; }
 
-  /* Поля и кнопки: одна высота, один радиус, один шрифт */
+  /* Строка служебного состояния: одна строка мелким текстом */
+  .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 12px; }
+  .status { display: flex; flex-wrap: wrap; gap: 0; font-size: 12px; line-height: 18px; color: var(--muted); }
+  .pill { display: inline; padding: 0; border: 0; background: none; font-size: 12px; }
+  .pill + .pill::before { content: "·"; margin: 0 8px; color: var(--muted); }
+  .pill.ok { color: var(--muted); }
+  .pill.warn { color: var(--low); }
+  .pill.err { color: var(--err); }
+  .how summary { font-size: 12px; line-height: 18px; color: var(--accent); font-weight: 400; }
+  .how[open] { flex-basis: 100%; }
+  .how > div { font-size: 12px; line-height: 18px; color: var(--muted); margin-top: 4px; max-width: 760px; }
+
+  /* Поля и кнопки (раздел 9) */
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-  label { font-weight: 600; }
+  label { font-weight: 500; }
   input[type=date] {
-    height: var(--control-h); padding: 0 10px;
-    border: 1px solid #b9c0cb; border-radius: var(--radius-sm); background: #fff; color: var(--text);
+    height: var(--control-h); padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--card); font-family: var(--mono); font-size: 13px; transition: border-color var(--t);
   }
+  input[type=date]:hover { border-color: #B9C3BC; }
   textarea {
-    width: 100%; min-height: 70px; resize: vertical; padding: 8px 10px;
-    border: 1px solid #b9c0cb; border-radius: var(--radius-sm); background: #fff; color: var(--text);
+    width: 100%; min-height: 80px; resize: vertical; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--card);
   }
   button {
     display: inline-flex; align-items: center; justify-content: center;
-    height: var(--control-h); padding: 0 16px; border-radius: var(--radius-sm);
+    height: var(--control-h); padding: 0 16px; border-radius: var(--radius);
     border: 1px solid var(--accent); background: var(--accent); color: #fff;
-    font-weight: 500; cursor: pointer; white-space: nowrap;
-    transition: background-color .15s, color .15s;
+    font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: background-color var(--t), border-color var(--t), color var(--t);
   }
   button:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); }
-  button.secondary { background: #fff; color: var(--accent); }
-  button.secondary:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-dark); border-color: var(--accent-dark); }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  a { color: var(--accent); }
+  /* Второстепенное действие: лёгкая нейтральная рамка, ниже по весу */
+  button.secondary {
+    height: 32px; padding: 0 12px; background: transparent; color: var(--text);
+    border-color: var(--line); font-size: 12px; font-weight: 500;
+  }
+  button.secondary:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--line); color: var(--accent-dark); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
 
   /* Сообщения */
   .error {
-    color: var(--err); background: #fdecec; border: 1px solid #f1b0b0;
-    border-radius: var(--radius-sm); padding: 8px 12px; margin-top: 12px; white-space: pre-wrap;
+    color: var(--err); background: var(--err-bg); border-radius: var(--radius);
+    padding: 10px 12px; margin-top: 12px; white-space: pre-wrap;
   }
-  .info {
-    background: var(--accent-soft); border: 1px solid #c9d8f0; border-radius: var(--radius-sm); padding: 8px 12px; margin-top: 12px;
-  }
-  .hidden { display: none !important; }
+  .info { background: var(--accent-soft); border-radius: var(--radius); padding: 10px 12px; margin-top: 12px; }
   .spinner {
-    display: inline-block; width: 16px; height: 16px; vertical-align: -3px;
-    border: 2px solid #c9d8f0; border-top-color: var(--accent); border-radius: 50%;
+    display: inline-block; width: 14px; height: 14px; vertical-align: -2px;
+    border: 2px solid #C9D9D0; border-top-color: var(--accent); border-radius: 50%;
     animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .progress { height: 8px; background: #e7eaef; border-radius: 4px; overflow: hidden; margin-top: 8px; max-width: 480px; }
+  .progress { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; margin-top: 8px; max-width: 480px; }
   .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 
-  /* Шаги агента: лента с временем слева, линией и точками */
+  /* Разделы: без рамок, разделение отступом и тонкой линией */
+  section { margin-top: var(--section-gap); padding-top: var(--section-gap); border-top: 1px solid var(--line); }
+  #run-section { margin-top: 0; padding-top: 0; border-top: 0; }
+  /* Рабочая поверхность результата — белая, без рамки и тени */
+  #result-section { background: var(--card); border-top: 0; border-radius: var(--radius); padding: var(--section-pad); }
+
+  /* Карточка главных чисел: одна белая полоса, позиции через вертикальные разделители */
+  .summary-card { background: var(--card); border-radius: var(--radius); padding: 20px 24px; margin-top: 24px; }
+  .summary-title { font-size: 12px; line-height: 18px; color: var(--muted); margin-bottom: 12px; }
+  .summary-numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .summary-numbers > div { padding: 0 24px; border-left: 1px solid var(--line); }
+  .summary-numbers > div:first-child { padding-left: 0; border-left: 0; }
+  .summary-value { font-family: var(--mono); font-size: 40px; line-height: 46px; font-weight: 500; letter-spacing: -0.01em; }
+  .summary-numbers > div > div:nth-child(2) { font-size: 13px; line-height: 18px; margin-top: 8px; }
+  .summary-label { font-size: 13px; line-height: 18px; color: var(--muted); margin-top: 4px; }
+  #summary-extra { margin-top: 16px; }
+
+  /* Лента шагов агента */
   ol.steps { list-style: none; margin: 0; padding: 0; }
-  ol.steps li {
-    position: relative;
-    display: grid; grid-template-columns: 64px 36px minmax(0, 1fr) auto; column-gap: 0;
-    padding-bottom: 12px;
-  }
-  ol.steps li::before {           /* линия ленты */
-    content: ""; position: absolute; left: 81px; top: 0; bottom: 0; width: 2px; background: var(--line);
-  }
+  ol.steps li { position: relative; display: grid; grid-template-columns: 64px 36px minmax(0, 1fr) auto; padding-bottom: 12px; }
+  ol.steps li::before { content: ""; position: absolute; left: 81px; top: 0; bottom: 0; width: 2px; background: var(--line); }
   ol.steps li:first-child::before { top: 9px; }
   ol.steps li:last-child::before { bottom: auto; height: 9px; }
   ol.steps li:only-child::before { display: none; }
-  ol.steps li::after {            /* точка шага */
-    content: ""; position: absolute; left: 75px; top: 3px; width: 14px; height: 14px; box-sizing: border-box;
+  ol.steps li::after {
+    content: ""; position: absolute; left: 75px; top: 4px; width: 14px; height: 14px; box-sizing: border-box;
     border-radius: 50%; background: var(--card); border: 2px solid var(--accent);
   }
-  .step-start { grid-column: 1; font-size: var(--fs-small); color: var(--muted); font-variant-numeric: tabular-nums; line-height: 20px; }
-  .step-name { grid-column: 3; font-weight: 600; line-height: 20px; }
-  .step-dur { grid-column: 4; padding-left: 12px; font-size: var(--fs-small); color: var(--muted); font-variant-numeric: tabular-nums; line-height: 20px; }
-  .step-summary { grid-column: 3 / 5; font-size: var(--fs-small); color: var(--muted); margin-top: 2px; }
-  .step-code { font-size: var(--fs-small); color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .step-start { grid-column: 1; font-family: var(--mono); font-size: 11px; line-height: 22px; color: var(--muted); }
+  .step-name { grid-column: 3; font-weight: 500; }
+  .step-dur { grid-column: 4; padding-left: 12px; font-family: var(--mono); font-size: 11px; line-height: 22px; color: var(--muted); }
+  .step-summary { grid-column: 3 / 5; font-size: 12px; line-height: 18px; color: var(--muted); }
+  .step-code { font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
 
   /* Сводка и числа дня */
-  .note { background: #fafbfc; border-left: 3px solid var(--accent); padding: 10px 14px; margin: 12px 0 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
-  .fact { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .note { border-left: 2px solid var(--accent); padding: 4px 0 4px 16px; margin: 16px 0 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 24px; margin-top: 16px; }
+  .fact { border-top: 1px solid var(--line); padding: 12px 0; }
   .fact ul { margin: 0; padding-left: 18px; }
 
   /* Графики */
-  .chart { margin-top: 12px; }
-  .chart h3 { margin: 12px 0 4px; }
-  .chart svg { width: 100%; height: auto; display: block; font-family: var(--font); }
-  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: var(--fs-small); color: var(--muted); margin-top: 6px; }
-  .swatch { display: inline-block; width: 14px; height: 10px; vertical-align: 0; margin-right: 5px; }
+  .chart { margin-top: 16px; }
+  .chart h3 { margin: 8px 0 4px; }
+  .chart svg { width: 100%; height: auto; display: block; font-family: var(--mono); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12px; line-height: 18px; color: var(--muted); margin-top: 4px; }
+  .swatch { display: inline-block; width: 14px; height: 10px; vertical-align: 0; margin-right: 6px; }
+  .validation-brief { font-size: 13px; line-height: 20px; color: var(--muted); margin-top: 8px; }
+  .validation-brief .v { font-family: var(--mono); color: var(--text); }
 
-  /* Таблицы: зебра, закреплённая шапка внутри прокручиваемого контейнера */
-  .table-wrap {
-    overflow: auto; max-height: 520px; margin-top: 12px;
-    border: 1px solid var(--line); border-radius: var(--radius-sm);
+  /* Таблица (раздел 8): белая, шапка #EEF1EE, только горизонтальные разделители, числа моноширинные */
+  .table-wrap { overflow: auto; max-height: 560px; margin-top: 12px; background: var(--card); border-radius: var(--radius); border: 1px solid var(--line); }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; line-height: 20px; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  thead th {
+    background: var(--table-head); position: sticky; top: 0; z-index: 1;
+    font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text); height: 40px; padding-top: 11px; padding-bottom: 11px;
   }
-  table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: var(--fs-small); line-height: var(--lh); font-variant-numeric: tabular-nums; }
-  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; white-space: nowrap; }
-  thead th { background: #f1f3f6; position: sticky; top: 0; z-index: 1; font-weight: 600; border-bottom: 1px solid var(--line); }
-  tbody tr:nth-child(even) > td, tbody tr:nth-child(even) > th { background: #f8f9fb; }
-  tbody tr:last-child > td, tbody tr:last-child > th { border-bottom: none; }
+  tbody tr { transition: background-color var(--t); }
+  tbody tr:hover > td, tbody tr:hover > th { background: var(--row-hover); }
+  tbody tr:last-child > td, tbody tr:last-child > th { border-bottom: 0; }
   td.num, th.num { text-align: right; }
+  td.num { font-family: var(--mono); font-weight: 400; }
   td.wrap { white-space: normal; min-width: 180px; }
-  /* Низкая уверенность: тёплый оттенок слабее зебры плюс метка слева */
-  tbody tr.low > td { background: #fffaf5; }
-  tbody tr.low:nth-child(even) > td { background: #fbf5ef; }
-  tbody tr.low > td:first-child { box-shadow: inset 3px 0 0 #f2b48a; }
+  .conf-low { display: inline-block; padding: 0 6px; border-radius: 2px; background: var(--low-bg); color: var(--low); font-size: 12px; line-height: 18px; font-weight: 500; }
+  .conf-ok { color: var(--muted); font-size: 12px; }
 
   .validation-table thead th { position: static; }
-  .validation-table tbody th { font-weight: 600; }
-  .validation-table th.group { text-align: center; border-left: 2px solid var(--line); }
-  .validation-table .group-start { border-left: 2px solid var(--line); }
+  .validation-table tbody th { font-weight: 500; }
+  .validation-table th.group { text-align: center; border-left: 1px solid var(--line); }
+  .validation-table .group-start { border-left: 1px solid var(--line); }
 
   pre {
-    white-space: pre-wrap; word-break: break-word; background: #fafbfc; border: 1px solid var(--line);
-    border-radius: var(--radius-sm); padding: 12px; font-size: var(--fs-small); max-height: 520px; overflow: auto; margin: 10px 0 0;
+    white-space: pre-wrap; word-break: break-word; background: var(--journal-bg); border-radius: var(--radius);
+    padding: 16px; font-family: var(--mono); font-size: 12px; line-height: 20px; max-height: 560px; overflow: auto; margin: 12px 0 0;
   }
   details summary { cursor: pointer; font-weight: 600; }
-  details.report summary { color: var(--accent); text-decoration: underline; font-weight: 400; margin-top: 12px; }
-  .facts-list { margin: 12px 0 0; padding-left: 20px; }
-
-  /* Карточка главных чисел проверки */
-  .summary-title { font-weight: 600; margin-bottom: 10px; }
-  .summary-numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-  .summary-value { font-size: var(--fs-title); font-weight: 600; font-variant-numeric: tabular-nums; line-height: var(--lh-tight); }
-  .summary-label { font-size: var(--fs-small); color: var(--muted); }
-  #summary-extra { margin-top: 10px; }
+  details.report summary { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; font-weight: 400; margin-top: 16px; }
+  .facts-list { margin: 16px 0 0; padding-left: 20px; }
 
   /* Чат */
+  .hints { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
+  .hints button { white-space: normal; height: auto; min-height: 32px; padding: 6px 12px; text-align: left; }
   .chat-log { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-  .msg { padding: 8px 12px; border-radius: var(--radius-sm); white-space: pre-wrap; max-width: 90%; }
+  .msg { padding: 10px 12px; border-radius: var(--radius); white-space: pre-wrap; max-width: 90%; }
   .msg.user { background: var(--accent-soft); align-self: flex-end; }
-  .msg.assistant { background: #f3f4f6; align-self: flex-start; }
-  .msg .who { font-size: var(--fs-small); color: var(--muted); display: block; margin-bottom: 2px; }
+  .msg.assistant { background: var(--card); align-self: flex-start; }
+  .msg .who { font-size: 12px; line-height: 18px; color: var(--muted); display: block; margin-bottom: 2px; }
 
-  @media (max-width: 600px) {
-    :root { --pad: 14px 14px; --fs-title: 22px; }
-    .summary-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 640px) {
+    :root { --page-pad: 16px; --page-top: 24px; --section-pad: 16px; }
+    h1 { font-size: 28px; line-height: 34px; }
+    .summary-card { padding: 16px; }
+    .summary-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+    .summary-numbers > div { padding: 0 12px; }
+    .summary-numbers > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+    .summary-value { font-size: 32px; line-height: 38px; }
   }
 </style>
 </head>
 <body>
 <main>
 
-  <header>
-    <h1>Прогноз выработки ВЭС на 48 часов</h1>
-    <div class="tagline">Почасовой прогноз двух ветротурбин в долях номинальной мощности: 0 — стоит, 1 — работает на полную.</div>
-    <div id="status" class="status"><span class="pill">Загружаю состояние…</span></div>
-    <!-- Карточка с главными числами проверки; скрыта, пока метрик нет -->
-    <div id="summary-card" class="summary-card hidden">
-      <div class="summary-title">Проверка на январе 2026, месяц не входил в обучение</div>
-      <div id="summary-numbers" class="summary-numbers"></div>
-      <div id="summary-extra" class="muted small hidden"></div>
+  <!-- Шапка: название слева, дата выпуска и основная кнопка справа -->
+  <header class="topbar">
+    <div>
+      <h1>Прогноз выработки</h1>
+      <div class="subtitle">2 турбины · горизонт 48 часов</div>
+    </div>
+    <div class="controls">
+      <label for="issue-date">Дата выпуска</label>
+      <input type="date" id="issue-date" min="2026-01-31" max="2026-02-28" value="2026-02-05">
+      <button id="next-day-btn" type="button" class="secondary">Следующий день</button>
+      <span id="period-end" class="muted small hidden">конец периода</span>
+      <button id="run-btn" type="button">Сформировать прогноз</button>
     </div>
   </header>
 
-  <!-- Запуск прогноза -->
-  <section id="run-section">
-    <h2>Сформировать прогноз</h2>
-    <div class="row">
-      <label for="issue-date">Дата выпуска прогноза</label>
-      <input type="date" id="issue-date" min="2026-01-31" max="2026-02-28" value="2026-02-05">
-      <button id="run-btn" type="button">Сформировать прогноз</button>
+  <!-- Служебное состояние одной строкой, второстепенные действия и пояснение -->
+  <div id="run-section">
+    <div class="meta-row">
+      <div id="status" class="status"><span class="pill">Загружаю состояние…</span></div>
       <button id="run-all-btn" type="button" class="secondary">Прогнать весь февраль</button>
+      <details class="how">
+        <summary>Как работает расчёт</summary>
+        <div>Доступны даты выпуска с 31.01.2026 по 28.02.2026. Прогноз строится на двое суток, следующих за датой выпуска, по часам, в долях номинальной мощности: 0 — турбина стоит, 1 — работает на полную. Время местное (UTC+5). Прогон всего февраля пишет сводки дней по шаблону; сводка от модели OpenAI строится для одного дня по кнопке «Сформировать прогноз» (при наличии ключа).</div>
+      </details>
     </div>
-    <div class="muted small" style="margin-top:6px">Доступны даты с 31.01.2026 по 28.02.2026. Прогноз строится на двое суток, следующих за датой выпуска. Прогон всего февраля пишет сводки дней по шаблону; сводка от модели OpenAI строится для одного дня по кнопке «Сформировать прогноз» (при наличии ключа).</div>
     <div id="run-wait" class="info hidden"><span class="spinner"></span> <span id="run-wait-text">Агент работает…</span>
       <div id="progress" class="progress hidden"><div id="progress-bar"></div></div>
     </div>
     <div id="run-error" class="error hidden"></div>
-  </section>
+  </div>
+
+  <!-- Карточка с главными числами проверки; скрыта, пока метрик нет -->
+  <div id="summary-card" class="summary-card hidden">
+    <div class="summary-title">Проверка на январе 2026, месяц не входил в обучение</div>
+    <div id="summary-numbers" class="summary-numbers"></div>
+    <div id="summary-extra" class="muted small hidden"></div>
+  </div>
 
   <!-- Результат: шаги, сводка, числа, графики, таблица -->
   <section id="result-section" class="hidden">
@@ -245,10 +274,11 @@
 
     <h3>График по турбинам</h3>
     <div class="legend">
-      <span><span class="swatch" style="background:var(--band);opacity:.25"></span>коридор p10–p90: с вероятностью около 80% выработка будет внутри</span>
-      <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>p50: наиболее вероятное значение</span>
-      <span><span class="swatch" style="background:var(--low);width:8px;height:8px;border-radius:50%"></span>час с низкой уверенностью</span>
+      <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>p50: медианный прогноз</span>
+      <span><span class="swatch" style="background:var(--band);opacity:.14"></span>p10–p90: оценочный диапазон</span>
+      <span><span class="swatch" style="background:var(--low);width:7px;height:7px;border-radius:50%"></span>низкая уверенность</span>
     </div>
+    <div id="validation-brief" class="validation-brief hidden"></div>
     <div id="charts"></div>
 
     <!-- Что изменилось при пересчёте: сравнение с выпуском предыдущего дня на общих часах -->
@@ -299,6 +329,12 @@
     <h2>Спросить агента</h2>
     <p class="muted small" style="margin-top:0">Например: «Сколько выдаст турбина 1 по прогнозу за 2026-02-05?» или «Почему часы низкой уверенности?»</p>
     <div id="chat-log" class="chat-log"></div>
+    <!-- Готовые вопросы: клик подставляет текст и сразу отправляет -->
+    <div class="hints">
+      <button type="button" class="secondary hint">Что изменилось по сравнению со вчера?</button>
+      <button type="button" class="secondary hint">В какие часы прогноз ненадёжный и почему?</button>
+      <button type="button" class="secondary hint">Какая ошибка была на январе против простых методов?</button>
+    </div>
     <textarea id="question" placeholder="Ваш вопрос о прогнозе"></textarea>
     <div class="row" style="margin-top:8px">
       <button id="ask-btn" type="button">Спросить</button>
@@ -439,6 +475,21 @@ function updateButtons() {
   const training = !!(lastStatus && lastStatus.training);
   $("run-btn").disabled = busy || training;
   $("run-all-btn").disabled = busy || training;
+  // «Следующий день»: нельзя шагнуть за конец периода и во время любого запуска
+  const date = $("issue-date").value;
+  const atEnd = date === PERIOD_END;
+  $("next-day-btn").disabled = busy || training || atEnd || !!validateDate(date);
+  show($("period-end"), atEnd);
+}
+
+// Следующий день: ставит D+1 в поле и запускает обычный прогноз тем же кодом, что основная кнопка.
+function runNextDay() {
+  const date = $("issue-date").value;
+  if (validateDate(date) || date >= PERIOD_END) return;
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  $("issue-date").value = d.toISOString().slice(0, 10);
+  runOneDay();
 }
 
 // ---------- проверка даты на клиенте ----------
@@ -652,34 +703,32 @@ function buildChartSvg(data) {
   const parts = [];
   // Сетка и подписи оси Y
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
-    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#e3e6eb" stroke-width="1"/>`);
-    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="12" fill="#5d6675">${v}</text>`);
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#E7EBE8" stroke-width="1"/>`);
+    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5E6B64">${v}</text>`);
   }
   // Подписи оси X каждые 6 часов
   data.forEach((r, i) => {
     if (i % 6 !== 0 && i !== n - 1) return;
     if (i === n - 1 && i % 6 !== 0) return;
-    parts.push(`<line x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${top + plotH}" stroke="#f0f2f5" stroke-width="1"/>`);
-    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="12" fill="#5d6675">${formatTime(r.target_time, false)}</text>`);
+    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="11" fill="#5E6B64">${formatTime(r.target_time, false)}</text>`);
   });
   // Коридор p10–p90
   if (n) {
     const upper = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p90).toFixed(1)}`);
     const lower = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p10).toFixed(1)}`).reverse();
-    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="#1f5fbf" fill-opacity="0.25" stroke="none"/>`);
+    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="#276653" fill-opacity="0.14" stroke="none"/>`);
     // Линия p50
     const line = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`).join(" ");
-    parts.push(`<polyline points="${line}" fill="none" stroke="#1f5fbf" stroke-width="2.2"/>`);
+    parts.push(`<polyline points="${line}" fill="none" stroke="#276653" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`);
     // Точки низкой уверенности
     data.forEach((r, i) => {
       if (r.confidence === "low") {
-        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="4.5" fill="#d9480f"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
+        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="3.5" fill="#8A5A16"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
       }
     });
   }
   // Оси
-  parts.push(`<line x1="${left}" x2="${left}" y1="${top}" y2="${top + plotH}" stroke="#9aa3b0"/>`);
-  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#9aa3b0"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#DCE2DD"/>`);
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График прогноза на 48 часов">${parts.join("")}</svg>`;
 }
 
@@ -762,19 +811,17 @@ function buildChangesSvg(data) {
     parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="#f08c00" fill-opacity="0.18"><title>${formatTime(p.target_time)}: было ${num(p.yesterday)}, стало ${num(p.today)}</title></rect>`);
   });
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
-    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#e3e6eb" stroke-width="1"/>`);
-    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="12" fill="#5d6675">${v}</text>`);
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#E7EBE8" stroke-width="1"/>`);
+    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5E6B64">${v}</text>`);
   }
   data.forEach((p, i) => {
     if (i % 6 !== 0) return;
-    parts.push(`<line x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${top + plotH}" stroke="#f0f2f5" stroke-width="1"/>`);
-    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="12" fill="#5d6675">${formatTime(p.target_time, false)}</text>`);
+    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="11" fill="#5E6B64">${formatTime(p.target_time, false)}</text>`);
   });
   const line = (field) => data.map((p, i) => `${x(i).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
   parts.push(`<polyline points="${line("yesterday")}" fill="none" stroke="#8a94a3" stroke-width="2" stroke-dasharray="6 4"/>`);
-  parts.push(`<polyline points="${line("today")}" fill="none" stroke="#1f5fbf" stroke-width="2.2"/>`);
-  parts.push(`<line x1="${left}" x2="${left}" y1="${top}" y2="${top + plotH}" stroke="#9aa3b0"/>`);
-  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#9aa3b0"/>`);
+  parts.push(`<polyline points="${line("today")}" fill="none" stroke="#276653" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#DCE2DD"/>`);
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Сравнение со вчерашним выпуском">${parts.join("")}</svg>`;
 }
 
@@ -784,7 +831,7 @@ function renderTable(rows) {
   const sorted = [...rows].sort((a, b) =>
     String(a.target_time).localeCompare(String(b.target_time)) || String(a.turbine).localeCompare(String(b.turbine)));
   body.innerHTML = sorted.map((r) => {
-    const conf = r.confidence === "low" ? "низкая" : r.confidence === "ok" ? "норм" : escapeHtml(r.confidence ?? "—");
+    const conf = r.confidence === "low" ? '<span class="conf-low">низкая</span>' : r.confidence === "ok" ? '<span class="conf-ok">норм</span>' : escapeHtml(r.confidence ?? "—");
     return `<tr class="${r.confidence === "low" ? "low" : ""}">
       <td>${formatTime(r.target_time)}</td><td>${escapeHtml(r.turbine)}</td>
       <td class="num">${num(r.ws100_forecast)}</td><td class="num">${num(r.temp_forecast)}</td>
@@ -800,10 +847,25 @@ async function loadValidation() {
     const data = await api("/api/validation");
     box.innerHTML = renderValidation(data);
     renderSummaryCard(data);
+    renderValidationBrief(data);
   } catch (e) {
     box.innerHTML = `<div class="info">${escapeHtml(e.message)}</div>`;
     renderSummaryCard(null);
+    renderValidationBrief(null);
   }
+}
+
+// Короткая строка у графиков: январская проверка из /api/validation, со ссылкой на подробную панель.
+function renderValidationBrief(data) {
+  const el = $("validation-brief");
+  const overall = get(data, "metrics", "validation", "overall");
+  const model = Number(get(overall, "model", "mae") ?? NaN);
+  const curve = Number(get(overall, "power_curve", "mae") ?? NaN);
+  if (!Number.isFinite(model)) { show(el, false); return; }
+  el.innerHTML = `Январская проверка: MAE <span class="v">${num(model)}</span>` +
+    (Number.isFinite(curve) ? ` · базовая кривая <span class="v">${num(curve)}</span>` : "") +
+    ` · февральских фактов пока нет · <a href="#validation-section">подробнее</a>`;
+  show(el, true);
 }
 
 // Карточка наверху: четыре числа из metrics.validation.overall. Нет чисел модели — карточку не показываем.
@@ -979,7 +1041,7 @@ function renderValidation(data) {
 
   let html = validationTable(v);
   html += `<ul class="facts-list">
-    <li>Часов в обучении: ${countOrDash(d.train_rows)}</li>
+    <li>Обучающих примеров: ${countOrDash(d.train_rows)}</li>
     <li>Убрано неполных часов: ${countOrDash(d.removed_incomplete_hours)}, часов простоя: ${countOrDash(d.removed_downtime_hours)}</li>
     <li>Месяц проверки ${formatMonth(metrics.validation_month)} в обучение не входил</li>
     <li>Дат выпуска в проверке: ${countOrDash(v.n_issue_dates)}</li>
@@ -1050,13 +1112,21 @@ async function loadSavedForecast(date) {
 async function init() {
   $("run-btn").addEventListener("click", runOneDay);
   $("run-all-btn").addEventListener("click", runWholePeriod);
+  $("next-day-btn").addEventListener("click", runNextDay);
+  $("issue-date").addEventListener("input", updateButtons);
   $("ask-btn").addEventListener("click", askAgent);
+  document.querySelectorAll(".hint").forEach((button) => button.addEventListener("click", () => {
+    if ($("ask-btn").disabled) return;   // ответ на прошлый вопрос ещё не пришёл
+    $("question").value = button.textContent.trim();
+    askAgent();
+  }));
   $("question").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) askAgent();
   });
   // При смене даты показываем уже готовый прогноз, если он есть.
   $("issue-date").addEventListener("change", () => {
     const date = $("issue-date").value;
+    updateButtons();
     if (!validateDate(date) && lastStatus && (lastStatus.forecasts_done || []).includes(date) && !busy) {
       showError($("run-error"), null);
       loadSavedForecast(date);
@@ -1076,6 +1146,7 @@ function showInitialForecast(status) {
   if (done.length) {
     const latest = done[done.length - 1];
     $("issue-date").value = latest;
+    updateButtons();
     loadSavedForecast(latest);
     return;
   }
