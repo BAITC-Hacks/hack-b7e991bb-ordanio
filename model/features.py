@@ -1,11 +1,12 @@
-# Признаки для модели: из погодного прогноза (ветер, порывы, направление, температура, давление)
-# и календаря (час суток, месяц) делает таблицу FEATURES для одной турбины, индекс time сохраняется.
+# Признаки для модели: из погодного прогноза (ветер, порывы, направление, температура, давление),
+# давности прогноза и календаря (час суток, месяц) делает таблицу FEATURES для одной турбины.
 
 import numpy as np
 import pandas as pd
 
 FEATURES = ["ws10", "ws100", "gust10", "dir_sin", "dir_cos", "temp2m", "pressure",
-            "hour_sin", "hour_cos", "month_sin", "month_cos", "turbine"]
+            "hour_sin", "hour_cos", "month_sin", "month_cos", "turbine",
+            "lead_day", "ws100_cube", "ws100_smooth"]
 
 # Колонки погоды, без которых признаки не построить (имена из model/weather.py).
 REQUIRED_WEATHER = ["ws10", "ws100", "gust10", "dir100", "temp2m", "pressure"]
@@ -45,5 +46,26 @@ def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
     out["month_cos"] = np.cos(2 * np.pi * (month - 1) / 12)
 
     out["turbine"] = turbine
+
+    # Давность прогноза в сутках: 0 — архив самых свежих прогнозов, 1 — прогноз на завтра, 2 — на послезавтра.
+    if "lead_day" in weather.columns:
+        lead = pd.to_numeric(weather["lead_day"], errors="coerce").fillna(0).astype(int)
+    elif "lead_hours" in weather.columns:
+        lead = (pd.to_numeric(weather["lead_hours"], errors="coerce").fillna(0) // 24).astype(int)
+    else:
+        lead = pd.Series(0, index=weather.index)
+    out["lead_day"] = lead.to_numpy()
+
+    # Мощность ветра растёт как куб скорости, поэтому куб ветра на 100 м даём модели отдельно.
+    out["ws100_cube"] = out["ws100"] ** 3
+    # Сглаженный ветер: среднее прогноза на соседние часы t−1, t, t+1 (на краях по доступным). Прогноз часто
+    # верно ловит порыв, но ошибается на час, сглаживание это смягчает. Каждая давность сглаживается отдельно.
+    smooth = pd.Series(np.nan, index=range(len(out)))
+    ws = pd.Series(out["ws100"].to_numpy())
+    for _, pos in pd.Series(range(len(out))).groupby(out["lead_day"].to_numpy()):
+        order = pos.to_numpy()[np.argsort(out.index[pos.to_numpy()], kind="stable")]
+        smooth.iloc[order] = ws.iloc[order].rolling(3, center=True, min_periods=1).mean().to_numpy()
+    out["ws100_smooth"] = smooth.to_numpy()
+
     out.index.name = "time"
     return out[FEATURES]

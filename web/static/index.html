@@ -109,6 +109,12 @@
   .msg.assistant { background: #f3f4f6; align-self: flex-start; }
   .msg .who { font-size: 12px; color: var(--muted); display: block; margin-bottom: 2px; }
   textarea { width: 100%; min-height: 70px; resize: vertical; }
+  .validation-table th { position: static; }
+  .validation-table tbody th { background: #fafbfc; }
+  .validation-table th.group { text-align: center; border-left: 2px solid var(--line); }
+  .validation-table .group-start { border-left: 2px solid var(--line); }
+  .facts-list { margin: 12px 0 0; padding-left: 20px; }
+  details.report summary { color: var(--accent); text-decoration: underline; font-weight: normal; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -625,58 +631,85 @@ function countOrDash(value) {
   return value === null || value === undefined ? "—" : escapeHtml(value);
 }
 
-// Одна таблица метрик: строки — модель и две точки отсчёта, колонки — MAE, RMSE, покрытие, ширина.
-const VALIDATION_ROWS = [
-  ["model", "Модель (бустинг)"],
-  ["persistence", "Завтра как сегодня"],
-  ["power_curve", "Кривая мощности по ветру"],
+// Одна таблица: строки — горизонт (48 ч, день 1, день 2), столбцы — группы по трём способам прогноза.
+const VALIDATION_METHODS = [
+  ["model", "Модель"],
+  ["persistence", "Persistence («завтра как сегодня»)"],
+  ["power_curve", "Кривая мощности"],
 ];
 
-function metricsTable(title, block) {
-  const body = VALIDATION_ROWS.map(([key, label]) => {
-    const m = get(block, key) || {};
-    return `<tr><td>${label}</td><td class="num">${num(m.mae)}</td><td class="num">${num(m.rmse)}</td>
-      <td class="num">${percent(m.coverage_p10_p90)}</td><td class="num">${num(m.mean_width_p10_p90)}</td></tr>`;
+function validationTable(v) {
+  const horizons = [
+    ["Все 48 ч", get(v, "overall")],
+    ["День 1", get(v, "by_lead_day", "day1")],
+    ["День 2", get(v, "by_lead_day", "day2")],
+  ];
+  const groupHead = VALIDATION_METHODS.map(([, label]) => `<th colspan="4" class="group">${escapeHtml(label)}</th>`).join("");
+  const subHead = VALIDATION_METHODS.map(() =>
+    '<th class="num group-start">MAE</th><th class="num">RMSE</th><th class="num">p10–p90, %</th><th class="num">Ширина</th>').join("");
+  const body = horizons.map(([label, block]) => {
+    const cells = VALIDATION_METHODS.map(([key]) => {
+      const m = get(block, key) || {};
+      return `<td class="num group-start">${num(m.mae)}</td><td class="num">${num(m.rmse)}</td>` +
+        `<td class="num">${percent(m.coverage_p10_p90)}</td><td class="num">${num(m.mean_width_p10_p90)}</td>`;
+    }).join("");
+    return `<tr><th>${label}</th>${cells}</tr>`;
   }).join("");
-  const rows = get(block, "rows");
-  return `<h3>${title}${rows !== undefined ? ` <span class="muted small">(строк: ${escapeHtml(rows)})</span>` : ""}</h3>
-    <div class="table-wrap" style="margin-top:4px"><table>
-      <thead><tr><th>Способ прогноза</th><th class="num">MAE</th><th class="num">RMSE</th>
-        <th class="num">Факт в коридоре p10–p90</th><th class="num">Средняя ширина коридора</th></tr></thead>
-      <tbody>${body}</tbody></table></div>`;
+  return `<div class="table-wrap validation-table"><table>
+    <thead><tr><th rowspan="2">Горизонт</th>${groupHead}</tr><tr>${subHead}</tr></thead>
+    <tbody>${body}</tbody></table></div>
+    <div class="muted small" style="margin-top:6px">MAE и RMSE — средняя ошибка в долях номинала, меньше — лучше.
+      «p10–p90, %» — доля часов, где факт попал в коридор (по замыслу около 80%). «Ширина» — средняя ширина коридора.
+      У persistence коридора нет.</div>`;
 }
 
-// Итоговый сдвиг времени из time_alignment: applied_shift_hours по периодам, иначе best_shift за весь период.
-function formatTimeShift(alignment) {
-  const applied = get(alignment, "applied_shift_hours");
-  const periods = get(alignment, "periods") || {};
-  if (applied !== null && typeof applied === "object" && Object.keys(applied).length) {
-    const entries = Object.entries(applied);
-    const values = [...new Set(entries.map(([, v]) => String(v)))];
-    const details = entries.map(([k, v]) => `${escapeHtml(get(periods, k, "name") || k)}: ${escapeHtml(v)} ч`).join(", ");
-    return values.length === 1 ? `${escapeHtml(values[0])} ч (${details})` : details;
+// Итоговая фраза собирается из чисел metrics: слова зависят от того, кто точнее.
+function validationVerdict(overall) {
+  const model = Number(get(overall, "model", "mae"));
+  const curve = Number(get(overall, "power_curve", "mae"));
+  const persistence = Number(get(overall, "persistence", "mae"));
+  const modelWidth = Number(get(overall, "model", "mean_width_p10_p90"));
+  const curveWidth = Number(get(overall, "power_curve", "mean_width_p10_p90"));
+  const parts = [];
+  if (Number.isFinite(model) && Number.isFinite(curve) && curve > 0) {
+    const gap = Math.abs(model - curve) / curve;
+    const verb = gap < 0.05 ? "на январе близки по ошибке"
+      : model < curve ? "на январе различаются: модель точнее" : "на январе различаются: кривая мощности точнее";
+    parts.push(`Модель и кривая мощности ${verb} (MAE ${num(model)} против ${num(curve)})`);
   }
-  if (typeof applied === "number") return `${applied} ч`;
-  const best = get(periods, "all", "best_shift");
-  return best !== undefined ? `${escapeHtml(best)} ч` : "—";
+  if (Number.isFinite(model) && Number.isFinite(persistence) && model > 0) {
+    const ratio = persistence / model;
+    parts.push(ratio >= 1
+      ? `модель в ${ratio.toFixed(1)} раза точнее persistence (${num(persistence)})`
+      : `persistence точнее модели (${num(persistence)} против ${num(model)})`);
+  }
+  if (Number.isFinite(modelWidth) && Number.isFinite(curveWidth)) {
+    const word = modelWidth < curveWidth ? "более узкий" : modelWidth > curveWidth ? "более широкий" : "такой же";
+    parts.push(`${parts.length ? "и даёт " : "Модель даёт "}${word} коридор (${num(modelWidth)} против ${num(curveWidth)})`);
+  }
+  if (!parts.length) return "";
+  // Последняя часть присоединяется через «и», остальные через запятую.
+  let text = parts[0];
+  for (let i = 1; i < parts.length; i++) text += (i === parts.length - 1 && parts[i].startsWith("и ") ? " " : ", ") + parts[i];
+  return text + ".";
 }
 
 function renderValidation(data) {
   const metrics = (data && data.metrics) || {};
   const v = metrics.validation || {};
-  const trainSeconds = Number(get(metrics, "model", "train_seconds"));
+  const d = metrics.data || {};
 
-  let html = `<p style="margin:12px 0 0">Месяц проверки: <b>${formatMonth(metrics.validation_month)}</b>.
-    Дат выпуска прогноза: <b>${countOrDash(v.n_issue_dates)}</b>, строк прогноза с известным фактом: <b>${countOrDash(v.rows_with_fact)}</b>.</p>`;
-  html += metricsTable("Все 48 часов", v.overall);
-  html += metricsTable("Первые сутки", get(v, "by_lead_day", "day1"));
-  html += metricsTable("Вторые сутки", get(v, "by_lead_day", "day2"));
-  html += `<p class="muted small">MAE и RMSE — средняя ошибка в долях номинала, меньше — лучше. «Факт в коридоре» по замыслу около 80%.
-    У «завтра как сегодня» коридора нет, поэтому там «—».</p>`;
-  html += `<p>Сдвиг времени по самопроверке: ${formatTimeShift(metrics.time_alignment)}.
-    Время обучения модели: ${Number.isFinite(trainSeconds) ? trainSeconds.toFixed(1) + " с" : "—"}.</p>`;
+  let html = validationTable(v);
+  html += `<ul class="facts-list">
+    <li>Часов в обучении: ${countOrDash(d.train_rows)}</li>
+    <li>Убрано неполных часов: ${countOrDash(d.removed_incomplete_hours)}, часов простоя: ${countOrDash(d.removed_downtime_hours)}</li>
+    <li>Месяц проверки ${formatMonth(metrics.validation_month)} в обучение не входил</li>
+    <li>Дат выпуска в проверке: ${countOrDash(v.n_issue_dates)}</li>
+  </ul>`;
+  const verdict = validationVerdict(v.overall);
+  if (verdict) html += `<p class="note">${verdict}</p>`;
   if (data && data.report) {
-    html += `<details><summary>Отчёт о проверке</summary><pre>${escapeHtml(data.report)}</pre></details>`;
+    html += `<details class="report"><summary>Полный отчёт модели</summary><pre>${escapeHtml(data.report)}</pre></details>`;
   }
   return html;
 }

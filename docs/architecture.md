@@ -41,8 +41,15 @@ def get_issued_forecast(issue_date: str, horizon_hours: int = 48) -> pd.DataFram
     + source ("previous_day1"/"previous_day2") + fetched_from ("network"/"cache")."""
 ```
 
+```python
+def get_previous_runs_weather(start: str, end: str) -> pd.DataFrame:
+    """История прогнозов previous_day1/previous_day2 с 2024-03-01 (previous-runs-api): те же колонки
+    + lead_day. Используется в обучении, чтобы модель училась на том же типе прогноза, на каком работает."""
+```
+
 Переменные Open-Meteo: `wind_speed_10m, wind_speed_100m, wind_gusts_10m, wind_direction_100m,
-temperature_2m, surface_pressure`, `wind_speed_unit=ms`, `timezone=Asia/Almaty`.
+temperature_2m, surface_pressure`, `wind_speed_unit=ms`, `timezone=Asia/Almaty`. Open-Meteo отдаёт
+все даты с постоянным смещением UTC+5; модуль переводит их в UTC и затем в настоящее Asia/Almaty.
 
 ## Данные и признаки: `model/prepare.py`, `model/features.py`
 
@@ -56,7 +63,8 @@ def filter_training(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     не менее 3 часов подряд). Возвращает данные и отчёт: сколько часов убрано по каждой причине."""
 
 FEATURES = ["ws10", "ws100", "gust10", "dir_sin", "dir_cos", "temp2m", "pressure",
-            "hour_sin", "hour_cos", "month_sin", "month_cos", "turbine"]
+            "hour_sin", "hour_cos", "month_sin", "month_cos", "turbine",
+            "lead_day", "ws100_cube", "ws100_smooth"]   # 15 признаков с 23.09 15:00
 
 def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
     """Из погодного ряда (индекс time, WEATHER_COLUMNS) делает таблицу с колонками FEATURES,
@@ -75,16 +83,20 @@ def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
 5. проверка на январе 2026 через `get_issued_forecast` для каждой даты выпуска с 31.12.2025 по 30.01.2026
    (то есть ровно так, как агент работает в феврале): MAE, RMSE по p50, доля факта внутри коридора p10–p90;
    рядом две точки отсчёта: persistence («завтра как сегодня») и кривая мощности по ветру из истории;
-6. сохраняет `model/artifacts/model_q10.joblib`, `model_q50.joblib`, `model_q90.joblib`,
-   `metrics.json`, `validation.csv` (time, turbine, actual, p10, p50, p90, persistence, curve),
-   `report.md` (объём данных, что выброшено, сдвиг, метрики против точек отсчёта).
+6. сохраняет `model/artifacts/model_q10.joblib`, `model_q50.joblib`, `model_q90.joblib`, `power_curve.joblib`,
+   `metrics.json`, `validation.csv` (issue_date, lead_hours, time, turbine, actual, p10, p50, p90,
+   persistence (пусто, если факта за день выпуска нет), curve), `report.md` (объём данных, что выброшено,
+   сдвиг, метрики против точек отсчёта, что пробовали).
+   Строение `metrics.json`: `validation.overall`, `validation.by_lead_day.day1|day2`,
+   `validation.by_turbine."1"|"2"`, внутри каждого `model`, `persistence`, `power_curve`
+   с ключами `mae`, `rmse`, `coverage_p10_p90`, `mean_width_p10_p90`.
 
 ```python
 def train(train_start: str | None = None, artifacts_dir: str | None = None) -> dict
     """Полный цикл обучения, возвращает метрики. CLI зовёт с умолчаниями (TRAIN_START, ARTIFACTS).
     Тест зовёт train(train_start="2025-11-02", artifacts_dir=<временная папка>), не трогая боевые артефакты."""
-def load_models(artifacts_dir: str | None = None) -> dict   # {"q10","q50","q90"}; кэшируется на процесс;
-                                                            # если артефактов нет — PowerCurveModel
+def load_models(artifacts_dir: str | None = None, refresh: bool = False) -> dict
+    # {"q10","q50","q90"} + кривая мощности из power_curve.joblib; кэшируется на процесс; если артефактов нет — PowerCurveModel
 def predict(features: pd.DataFrame, turbine: int, models: dict | None = None) -> pd.DataFrame
     """Индекс time; колонки: turbine, p10, p50, p90 в [0,1], p10 <= p50 <= p90 (после сортировки)."""
 ```
@@ -102,7 +114,7 @@ run_model(features_by_turbine) -> pd.DataFrame       # объединённый 
 save_forecast(issue_date, forecast, weather) -> str  # путь к output/forecasts/forecast_<issue_date>.csv
 analyze(issue_date, forecast, previous_forecast, actuals) -> dict
     # totals по турбинам и суткам; delta_vs_previous по пересекающимся часам; low_confidence_hours
-    # (|p50 − p50_prev| > 0.15 или ширина коридора p90−p10 > 0.7, это верхняя четверть часов при медиане 0.50); extreme_wind_hours (ws100 > 25 м/с);
+    # (|p50 − p50_prev| > 0.15 или ширина коридора p90−p10 выше 75-го процентиля ширины по model/artifacts/validation.csv, запасное значение 0.8); extreme_wind_hours (ws100 > 25 м/с);
     # error_yesterday (MAE по факту, если факт есть, иначе None)
 write_journal(issue_date, analysis, note) -> None    # добавляет раздел в output/journal.md
 

@@ -16,7 +16,7 @@ from common.config import ARTIFACTS, TRAIN_START, TURBINES, TZ, VALIDATION_MONTH
 from model.features import FEATURES, build_features
 from model.predict import QUANTILES, PowerCurveModel, predict
 from model.prepare import filter_training, load_hourly
-from model.weather import get_issued_forecast, get_training_weather
+from model.weather import get_issued_forecast, get_previous_runs_weather, get_training_weather
 
 log = logging.getLogger("train")
 
@@ -24,6 +24,10 @@ log = logging.getLogger("train")
 CLOCK_CHANGE = "2024-03-01"
 SHIFTS = list(range(-2, 3))
 MIN_ROWS_FOR_CORR = 100   # меньше строк в периоде: корреляцию не считаем, сдвиг берём 0
+# Сдвиг применяется, только если корреляция при лучшем сдвиге выше корреляции при нуле хотя бы на столько.
+# Меньший отрыв похож на случайность; тогда сдвиг 0, и обучение совпадает с тем, как работает агент.
+SHIFT_MIN_GAIN = 0.01
+
 
 MODEL_PARAMS = {
     "max_iter": 300,
@@ -31,7 +35,8 @@ MODEL_PARAMS = {
     "max_leaf_nodes": 31,
     "min_samples_leaf": 50,
     "l2_regularization": 0.0,
-    "early_stopping": False,
+    "early_stopping": True,
+    "validation_fraction": 0.1,
     "random_state": 0,
 }
 
@@ -96,12 +101,22 @@ def check_alignment(facts: pd.DataFrame, weather: pd.DataFrame) -> dict:
                      "(замер в час t ближе всего к прогнозу на час t%+d)",
                      PERIOD_NAMES[key],
                      ", ".join(f"{k:+d}: {valid[k]:.4f}" for k in sorted(valid)), best, best)
-    applied = {key: int(result[key]["best_shift"] or 0) for key in ("before", "after")}
+    applied = {}
+    for key in ("before", "after"):
+        info = result[key]
+        best = info["best_shift"]
+        corr0 = info["by_shift"]["0"]["corr"]
+        gain = None if best is None or corr0 is None else info["by_shift"][str(best)]["corr"] - corr0
+        info["gain_over_zero"] = gain
+        applied[key] = int(best) if best and gain is not None and gain >= SHIFT_MIN_GAIN else 0
+        if best and not applied[key]:
+            log.info("Самопроверка времени, %s: отрыв лучшего сдвига от нуля %s меньше порога %s, "
+                     "сдвиг не применён", PERIOD_NAMES[key], _f(gain), SHIFT_MIN_GAIN)
     for key, k in applied.items():
         if k != 0:
             log.info("Сдвиг %+d ч применяю к погоде периода «%s» при склейке с фактом", k, PERIOD_NAMES[key])
     if not any(applied.values()):
-        log.info("Лучший сдвиг в обоих периодах 0: погоду с фактом склеиваю час в час")
+        log.info("Применённый сдвиг в обоих периодах 0: погоду с фактом склеиваю час в час")
     return {"periods": result, "applied_shift_hours": applied}
 
 
@@ -251,7 +266,10 @@ def write_report(path: Path, m: dict) -> None:
     L.append("Входы модели берутся только из прогноза погоды Open-Meteo в одной точке между турбинами "
              "(турбины стоят в 240 м друг от друга и попадают в одну ячейку сетки погодной модели) и из "
              "календаря. Модель учится на парах «прогноз погоды на этот час» и «фактическая выработка в этот "
-             "час» за всю историю турбин, кроме месяца проверки.\n")
+             "час» за всю историю турбин, кроме месяца проверки. Прогнозы в обучении трёх видов: архив самых "
+             "свежих прогнозов (давность 0, вся история) и прогнозы, сделанные за сутки и за двое суток "
+             "(давность 1 и 2, сервис previous-runs, есть с 2024-03-01). Последние два вида такие же, какие "
+             "агент получает в работе. Давность прогноза модель видит как признак.\n")
     L.append("Сама модель это градиентный бустинг решающих деревьев (HistGradientBoostingRegressor из "
              "scikit-learn). Она состоит из нескольких сотен небольших деревьев вида «если прогноз ветра на "
              "100 м больше X и ветер дует с такого-то направления, то добавить к оценке столько-то». Каждое "
@@ -270,7 +288,7 @@ def write_report(path: Path, m: dict) -> None:
              "фактом.\n")
     L.append("Рядом посчитаны две точки отсчёта. Persistence: «завтра и послезавтра будет как сегодня», "
              "для даты выпуска D берётся факт дня D в тот же час. Кривая мощности: выработка по прогнозу "
-             "ветра на 100 м через кривую, построенную по тем же обучающим часам.\n")
+             "ветра на 100 м через кривую, построенную по обучающим часам архива прогнозов.\n")
 
     L.append("## Данные\n")
     L.append("| Показатель | Турбина 1 | Турбина 2 | Всего |")
@@ -282,6 +300,9 @@ def write_report(path: Path, m: dict) -> None:
     L.append(f"| Обучающих строк (с погодой, без месяца проверки) | {d['train_rows_turbine_1']} | "
              f"{d['train_rows_turbine_2']} | {d['train_rows']} |")
     L.append("")
+    L.append(f"Обучающие строки по видам прогноза: архив {d['train_rows_archive']}, прогноз за сутки "
+             f"{d['train_rows_previous_day1']}, прогноз за двое суток {d['train_rows_previous_day2']}. Один и тот же "
+             "час факта входит в обучение до трёх раз, с разными прогнозами на этот час.\n")
     L.append(f"Факт взят с {d['facts_first']} по {d['facts_last']}. Фильтр убрал {d['removed_incomplete_hours']} "
              f"неполных часов (меньше 4 из 6 десятиминутных замеров), {d['removed_no_power_value']} часов без "
              f"значения мощности и {d['removed_downtime_hours']} часов вероятного простоя (замеренный ветер "
@@ -324,6 +345,12 @@ def write_report(path: Path, m: dict) -> None:
         if info["peak_hours_estimate"] is not None:
             s += (f" Если провести параболу через три соседние точки, её вершина приходится на "
                   f"{info['peak_hours_estimate']:+.2f} ч.")
+        if p != "all" and b != 0:
+            gain = info.get("gain_over_zero")
+            if al["applied_shift_hours"][p]:
+                s += f" Отрыв от нуля {_f(gain)}, не меньше порога {SHIFT_MIN_GAIN}: сдвиг применён."
+            else:
+                s += f" Отрыв от нуля {_f(gain)}, отрыв меньше порога {SHIFT_MIN_GAIN}, сдвиг не применён."
         L.append(s)
     L.append("")
     pb, pa = per["before"]["peak_hours_estimate"], per["after"]["peak_hours_estimate"]
@@ -333,8 +360,8 @@ def write_report(path: Path, m: dict) -> None:
                 "погоды Open-Meteo дан на момент начала часа. Поэтому вершина около ±0,5 ч ожидаема сама по себе.")
         if 0.5 <= abs(diff) <= 1.5:
             text += (" Разница между периодами близка к одному часу. Это согласуется с тем, что часы SCADA после "
-                     f"{CLOCK_CHANGE} не переводились и остались на UTC+6. Целый сдвиг в каждом периоде выбран "
-                     "по наибольшей корреляции. Дробную часть часа сдвиг на целые часы исправить не может.\n")
+                     f"{CLOCK_CHANGE} не переводились и остались на UTC+6. Целый сдвиг в каждом периоде ищется "
+                     "по наибольшей корреляции и применяется только при заметном отрыве от нуля. Дробную часть часа сдвиг на целые часы исправить не может.\n")
         else:
             text += (" Разница между периодами меньше половины часа или больше полутора часов. Признаков "
                      "непереведённых часов SCADA самопроверка не показала.\n")
@@ -348,14 +375,17 @@ def write_report(path: Path, m: dict) -> None:
             L.append("Важно: агент и model/predict.py этот сдвиг сами не применяют. Прогноз агента на час t "
                      f"соответствует часу t{ap['after']:+d} по часам SCADA.\n")
     else:
-        L.append("Лучший целый сдвиг в обоих периодах равен 0, поэтому погода и факт склеены час в час, "
-                 "без сдвига.\n")
+        L.append("Применённый сдвиг в обоих периодах равен 0, поэтому погода и факт склеены час в час. "
+                 f"Сдвиг применяется, только если корреляция при нём выше, чем при нуле, хотя бы на {SHIFT_MIN_GAIN}.\n")
 
     L.append("## Признаки\n")
-    L.append("Модель получает 12 признаков: скорость ветра на 10 и 100 м, порывы на 10 м, направление ветра "
+    L.append(f"Модель получает {len(FEATURES)} признаков: скорость ветра на 10 и 100 м, порывы на 10 м, направление ветра "
              "на 100 м (синус и косинус угла, чтобы 359° и 1° были рядом), температура воздуха на 2 м, "
              "давление у поверхности, местный час суток и месяц (тоже синус и косинус, чтобы 23 часа были "
-             "рядом с полуночью, а декабрь рядом с январём), номер турбины.\n")
+             "рядом с полуночью, а декабрь рядом с январём), номер турбины. Ещё три: давность прогноза в "
+             "сутках (0 архив, 1 завтра, 2 послезавтра), куб ветра на 100 м (мощность потока растёт как куб "
+             "скорости) и ветер на 100 м, усреднённый по соседним часам t−1, t, t+1 (прогноз часто верно "
+             "ловит перемену ветра и ошибается на час).\n")
     L.append("Все погодные признаки взяты из прогноза. Замеры турбины (ветер на гондоле, температура) в "
              "признаки не входят: в день выпуска прогноза замеров за завтра и послезавтра ещё нет. Если учить "
              "модель на замерах, она привыкнет к точному ветру и будет ошибаться сильнее на прогнозном.\n")
@@ -367,8 +397,11 @@ def write_report(path: Path, m: dict) -> None:
              f"{params['learning_rate']}, листьев в дереве не больше {params['max_leaf_nodes']}, в листе не меньше "
              f"{params['min_samples_leaf']} часов, регуляризация L2 {params['l2_regularization']}, ранняя "
              f"остановка {'включена' if params['early_stopping'] else 'выключена'}, random_state="
-             f"{params['random_state']}. Параметры заданы заранее и не подбирались по январю. Обучение трёх "
-             f"моделей и кривой мощности заняло {mp['train_seconds']:.1f} с на процессоре.\n")
+             f"{params['random_state']}. При ранней остановке {int(100 * params.get('validation_fraction', 0))}% обучающих "
+             "строк откладываются на контроль, и добавление деревьев прекращается, когда ошибка на них "
+             "перестаёт падать. Деревьев в итоге: "
+             + ", ".join(f"{k} {n}" for k, n in mp.get("iterations", {}).items()) + ". "
+             f"Обучение трёх моделей и кривой мощности заняло {mp['train_seconds']:.1f} с на процессоре.\n")
     L.append(f"Кривая мощности: бины прогноза ветра на 100 м шириной {PowerCurveModel.BIN_WIDTH} м/с, в каждом "
              "бине квантили выработки 0.1, 0.5 и 0.9, отдельно по турбинам.\n")
 
@@ -414,11 +447,17 @@ def write_report(path: Path, m: dict) -> None:
     L.append("Сравнение с кривой мощности по MAE. Модель точнее кривой в срезах: "
              f"{', '.join(better) if better else 'ни в одном'}. Модель не точнее кривой в срезах: "
              f"{', '.join(not_better) if not_better else 'ни в одном'}.\n")
+    L.append("## Что пробовали\n")
+    L.append("Первая версия училась только на архиве самых свежих прогнозов, и на январе её MAE был на уровне "
+             "кривой мощности. Текущая версия учится ещё и на прогнозах за сутки и за двое суток, то есть на том "
+             "же типе прогноза, с которым работает агент. Сравнение вариантов, сделанное 23.09.2026 тем же способом "
+             "проверки, с числами, лежит в docs/experiments.md. Покрытие коридора у текущей версии выше замысла "
+             "в 80%, p10 и p90 стоит откалибровать на следующем шаге.\n")
     arch = v.get("archive_forecast_check")
     if arch and arch.get("rows"):
         L.append("Отдельная сверка, чтобы понять, откуда ошибка. Те же модели на тех же часах месяца проверки, "
-                 "только признаки взяты из архива прогнозов (как при обучении, самые свежие запуски погодной "
-                 f"модели). Строк {arch['rows']}, MAE модели {_f(arch['model_mae'])}, MAE кривой мощности "
+                 "только признаки взяты из архива прогнозов (самые свежие запуски погодной модели, "
+                 f"давность 0). Строк {arch['rows']}, MAE модели {_f(arch['model_mae'])}, MAE кривой мощности "
                  f"{_f(arch['curve_mae'])}, покрытие коридора модели {_f(arch['model_coverage_p10_p90'], 3)}. "
                  "Разница с таблицей выше показывает, сколько добавляет то, что прогноз погоды сделан за 1–2 "
                  "суток.\n")
@@ -428,10 +467,8 @@ def write_report(path: Path, m: dict) -> None:
              "ведёт себя весной и летом, эта проверка не показывает.")
     L.append("- Сервис previous-runs отдаёт прогноз, известный накануне (день 1) и за двое суток (день 2). В какой "
              "час дня выпуска этот запуск погодной модели реально был бы доступен, по данным сервиса не видно.")
-    L.append("- Модель обучена на архиве прогнозов (historical-forecast), он склеен из самых свежих запусков "
-             "погодной модели. В работе и на проверке модель получает прогноз на 1–2 суток вперёд, он менее "
-             "точен. Поэтому на обучении коридор p10–p90 мог выйти уже, чем нужно для прогноза на двое суток. "
-             "Покрытие на январе показывает, насколько это заметно.")
+    L.append("- Прогнозы за сутки и за двое суток есть только с 2024-03-01. Период до этой даты представлен в "
+             "обучении только архивом самых свежих прогнозов.")
     L.append("- Persistence берёт факт за весь день выпуска D. В реальный момент выпуска вторая половина дня D "
              "ещё неизвестна, так что эта точка отсчёта здесь немного сильнее, чем была бы на практике.")
     L.append("- Часы простоя и неполные часы убраны и из обучения, и из проверки. Метрики описывают исправную "
@@ -497,20 +534,33 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
     alignment = check_alignment(facts, weather)
     applied = alignment["applied_shift_hours"]
 
-    # 4. Склейка и обучение.
+    # 4. Склейка и обучение. Архив прогнозов (давность 0) и история прогнозов «за сутки» и «за двое суток»
+    # (давность 1 и 2) склеиваются с одним и тем же фактом; месяц проверки откладывается.
     joined = join_features(facts, weather, applied)
     data["rows_without_weather"] = int(len(facts) - len(joined))
     in_val = joined["time"].dt.strftime("%Y-%m") == VALIDATION_MONTH
-    train_df = joined[~in_val]
+    archive_train = joined[~in_val]
     data["validation_month_rows"] = int(in_val.sum())
+    prev_weather = get_previous_runs_weather(train_start, weather_end)
+    prev_weather = prev_weather[prev_weather["ws100"].notna()]
+    data["previous_runs_weather_rows"] = int(len(prev_weather))
+    if len(prev_weather):
+        prev = join_features(facts, prev_weather, applied)
+        prev_train = prev[prev["time"].dt.strftime("%Y-%m") != VALIDATION_MONTH]
+    else:
+        prev_train = archive_train.iloc[0:0]
+    train_df = pd.concat([archive_train, prev_train], ignore_index=True)
+    data["train_rows_archive"] = int(len(archive_train))
+    for k in (1, 2):
+        data[f"train_rows_previous_day{k}"] = int((prev_train["lead_day"] == k).sum())
     data["train_rows"] = int(len(train_df))
     for turbine in sorted(TURBINES):
         data[f"train_rows_turbine_{turbine}"] = int((train_df["turbine"] == turbine).sum())
     if train_df.empty:
         raise ValueError("Нет обучающих строк: вся история попала в месяц проверки")
-    log.info("Обучающих строк %d (турбина 1: %d, турбина 2: %d), строк месяца проверки %d отложено",
-             data["train_rows"], data.get("train_rows_turbine_1", 0), data.get("train_rows_turbine_2", 0),
-             data["validation_month_rows"])
+    log.info("Обучающих строк %d: архив %d, прогноз за сутки %d, за двое суток %d; строк месяца проверки "
+             "%d отложено", data["train_rows"], len(archive_train), data["train_rows_previous_day1"],
+             data["train_rows_previous_day2"], data["validation_month_rows"])
 
     X = train_df[FEATURES].to_numpy(dtype=float)
     y = train_df["power"].to_numpy(dtype=float)
@@ -521,8 +571,8 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
         models[name] = HistGradientBoostingRegressor(loss="quantile", quantile=q, **MODEL_PARAMS).fit(X, y)
         log.info("Модель %s (квантиль %.1f) обучена за %.1f с", name, q, time.perf_counter() - t0)
 
-    # 5. Точка отсчёта: кривая мощности по прогнозному ветру на 100 м, те же обучающие строки.
-    curve = PowerCurveModel().fit(train_df["ws100"], train_df["power"], train_df["turbine"])
+    # 5. Точка отсчёта: кривая мощности по ветру на 100 м из архива прогнозов (как в первой версии).
+    curve = PowerCurveModel().fit(archive_train["ws100"], archive_train["power"], archive_train["turbine"])
     train_seconds = time.perf_counter() - t_fit
 
     for name, model in models.items():
@@ -576,7 +626,8 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
         "weather": weather_info,
         "time_alignment": alignment,
         "model": {"type": "HistGradientBoostingRegressor", "loss": "quantile", "quantiles": QUANTILES,
-                  "features": FEATURES, "params": MODEL_PARAMS, "train_seconds": train_seconds},
+                  "features": FEATURES, "params": MODEL_PARAMS, "train_seconds": train_seconds,
+                  "iterations": {name: int(model.n_iter_) for name, model in models.items()}},
         "validation": val_summary,
     }
     metrics["total_seconds"] = time.perf_counter() - t_start

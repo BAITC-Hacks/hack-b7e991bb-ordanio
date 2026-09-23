@@ -174,3 +174,51 @@ def get_issued_forecast(issue_date: str, horizon_hours: int = HORIZON_HOURS) -> 
     out["fetched_from"] = origin
     out[WEATHER_COLUMNS] = out[WEATHER_COLUMNS].astype(float)
     return out
+
+
+PREVIOUS_RUNS_START = "2024-03-01"   # раньше этой даты previous-runs-api отдаёт пустые значения
+
+
+def get_previous_runs_weather(start: str, end: str, lead_days: tuple[int, ...] = (1, 2)) -> pd.DataFrame:
+    """История прогнозов «за сутки» и «за двое суток» (previous-runs-api) по WEATHER_POINT, start..end,
+    для обучения на том же типе прогноза, на каком модель работает у агента. Длинный формат: каждый час
+    встречается по разу на каждый lead_day. Индекс time (tz Asia/Almaty), колонки WEATHER_COLUMNS
+    + lead_day (1 или 2) + lead_hours (24*lead_day, как у get_issued_forecast в полночь выпуска).
+    Запросы режутся по годам, кэш previous_runs_<от>_<до>.json. Даты раньше PREVIOUS_RUNS_START
+    обрезаются, об этом пишется в лог."""
+    if start < PREVIOUS_RUNS_START:
+        log.info("previous-runs есть только с %s, начало %s обрезано", PREVIOUS_RUNS_START, start)
+        start = PREVIOUS_RUNS_START
+    if start > end:
+        return pd.DataFrame(columns=WEATHER_COLUMNS + ["lead_day", "lead_hours"])
+    variables = [f"{v}_previous_day{k}" for k in lead_days for v in OPEN_METEO_VARS]
+    frames = []
+    for a, b in _year_chunks(start, end):
+        name = f"previous_runs_{a}_{b}"
+        if not _cache_path(name).exists():
+            for p in sorted(Path(WEATHER_CACHE).glob(f"previous_runs_{a[:4]}-*.json")):
+                _, _, pa, pb = p.stem.split("_")
+                if pa <= a and pb >= b:
+                    name = p.stem
+                    break
+        params = _base_params() | {"start_date": a, "end_date": b, "hourly": ",".join(variables)}
+        data, origin = _fetch_json(name, PREVIOUS_RUNS_URL, params)
+        log.info("История previous-runs %s … %s: %s", a, b, "из кэша" if origin == "cache" else "из сети")
+        h = data["hourly"]
+        idx = _to_local_index(h["time"], data["utc_offset_seconds"])
+        for k in lead_days:
+            df = pd.DataFrame({col: h.get(f"{var}_previous_day{k}") for col, var in zip(WEATHER_COLUMNS, OPEN_METEO_VARS)},
+                              index=idx).astype(float)
+            df = df[~df.index.duplicated(keep="first")]
+            df["lead_day"] = k
+            df["lead_hours"] = 24 * k
+            frames.append(df)
+    out = pd.concat(frames).sort_index()
+    out.index.name = "time"
+    lo = pd.Timestamp(start, tz=TZ)
+    hi = pd.Timestamp(end, tz=TZ) + pd.Timedelta(hours=23)
+    out = out.loc[(out.index >= lo) & (out.index <= hi)]
+    n_empty = int(out["ws100"].isna().sum())
+    if n_empty:
+        log.warning("В истории previous-runs %d строк без ветра на 100 м (пустые значения API)", n_empty)
+    return out
