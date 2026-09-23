@@ -1,5 +1,5 @@
 # Обучение прогноза выработки: факт турбин + архив прогнозов погоды → три квантильные модели (p10, p50, p90),
-# самопроверка времени, проверка на январе 2026 так, как работает агент, артефакты и отчёт report.md.
+# самопроверка времени, проверка на месяце проверки так, как работает агент, артефакты и отчёт report.md.
 
 import json
 import logging
@@ -40,6 +40,10 @@ MODEL_PARAMS = {
     "random_state": 0,
 }
 
+# Независимый тест: месяц, на котором версия модели не выбиралась, и папка с его отчётом.
+INDEPENDENT_TEST_MONTH = "2025-12"
+INDEPENDENT_TEST_DIR = "model/artifacts_dec2025"
+
 PERIOD_NAMES = {
     "before": f"до {CLOCK_CHANGE}",
     "after": f"с {CLOCK_CHANGE}",
@@ -49,9 +53,9 @@ PERIOD_NAMES = {
 
 # ---------------------------------------------------------------- время и выравнивание
 
-def _validation_bounds() -> tuple[pd.Timestamp, pd.Timestamp]:
+def _validation_bounds(month: str) -> tuple[pd.Timestamp, pd.Timestamp]:
     """Первый и последний день месяца проверки (даты без часового пояса)."""
-    p = pd.Period(VALIDATION_MONTH, freq="M")
+    p = pd.Period(month, freq="M")
     return p.start_time.normalize(), p.end_time.normalize()
 
 
@@ -182,12 +186,11 @@ def group_metrics(df: pd.DataFrame) -> dict:
 
 # ---------------------------------------------------------------- проверка «как агент»
 
-def validate(models: dict, curve: PowerCurveModel, facts: pd.DataFrame, applied: dict) -> tuple[pd.DataFrame, dict]:
-    """Для каждой даты выпуска месяца проверки берёт прогноз погоды, известный в тот день, строит прогноз
-    по обеим турбинам и сравнивает с фактом. Возвращает строки проверки и сводку по ним."""
-    first_day, last_day = _validation_bounds()
+def forecast_month(models: dict, curve: PowerCurveModel, month: str) -> tuple[pd.DataFrame, dict]:
+    """Для каждой даты выпуска месяца проверки (с последнего дня предыдущего месяца по предпоследний день
+    месяца) берёт прогноз погоды, известный в тот день, и строит прогноз по обеим турбинам, как агент."""
+    first_day, last_day = _validation_bounds(month)
     issue_dates = pd.date_range(first_day - pd.Timedelta(days=1), last_day - pd.Timedelta(days=1), freq="D")
-    fact = facts.set_index(["time", "turbine"])["power"]
     frames = []
     for issue in issue_dates:
         issue_str = issue.strftime("%Y-%m-%d")
@@ -196,43 +199,68 @@ def validate(models: dict, curve: PowerCurveModel, facts: pd.DataFrame, applied:
             feats = build_features(fc, turbine)
             p = predict(feats, turbine, models)
             c = curve.predict(feats, turbine)
-            df = pd.DataFrame({
+            frames.append(pd.DataFrame({
                 "time": feats.index, "turbine": turbine, "issue_date": issue_str,
                 "lead_hours": fc["lead_hours"].to_numpy(), "source": fc["source"].to_numpy(),
                 "p10": p["p10"].to_numpy(), "p50": p["p50"].to_numpy(), "p90": p["p90"].to_numpy(),
                 "curve": c["p50"].to_numpy(), "curve_p10": c["p10"].to_numpy(), "curve_p90": c["p90"].to_numpy(),
-            })
-            frames.append(df)
+            }))
     rows = pd.concat(frames, ignore_index=True)
     rows["lead_day"] = rows["lead_hours"] // 24
-    # Время факта с учётом найденного сдвига: прогноз на час t+k сравнивается с замером часа t.
-    fact_time = rows["time"] - pd.to_timedelta(_shift_for_times(rows["time"], applied), unit="h")
-    key = pd.MultiIndex.from_arrays([fact_time, rows["turbine"]])
-    rows["actual"] = fact.reindex(key).to_numpy()
-    # Persistence: для даты выпуска D берём факт дня D в тот же час.
-    pers_time = fact_time - pd.to_timedelta(rows["lead_day"], unit="D")
-    rows["persistence"] = fact.reindex(pd.MultiIndex.from_arrays([pers_time, rows["turbine"]])).to_numpy()
-
-    summary = {
+    info = {
         "issue_dates": [issue_dates[0].strftime("%Y-%m-%d"), issue_dates[-1].strftime("%Y-%m-%d")],
         "n_issue_dates": int(len(issue_dates)),
         "forecast_rows": int(len(rows)),
         "sources": {str(k): int(v) for k, v in rows["source"].value_counts().items()},
     }
+    return rows, info
+
+
+def match_facts(forecast: pd.DataFrame, facts: pd.DataFrame, applied: dict, month: str) -> tuple[pd.DataFrame, dict]:
+    """Сопоставляет прогнозы с фактом (и persistence) и считает метрики: общие, по дню горизонта, по турбинам.
+    Строки без факта убираются, их число пишется в сводку."""
+    fact = facts.set_index(["time", "turbine"])["power"]
+    rows = forecast.copy()
+    # Время факта с учётом найденного сдвига: прогноз на час t+k сравнивается с замером часа t.
+    fact_time = rows["time"] - pd.to_timedelta(_shift_for_times(rows["time"], applied), unit="h")
+    rows["actual"] = fact.reindex(pd.MultiIndex.from_arrays([fact_time, rows["turbine"]])).to_numpy()
+    # Persistence: для даты выпуска D берём факт дня D в тот же час (и для дня 1, и для дня 2).
+    pers_time = fact_time - pd.to_timedelta(rows["lead_day"], unit="D")
+    rows["persistence"] = fact.reindex(pd.MultiIndex.from_arrays([pers_time, rows["turbine"]])).to_numpy()
+
+    first_day, last_day = _validation_bounds(month)
+    n_month_hours = len(pd.date_range(pd.Timestamp(first_day, tz=TZ), pd.Timestamp(last_day, tz=TZ)
+                                      + pd.Timedelta(hours=23), freq="h"))
+    # В проверку идут только часы самого месяца: день 2 последней даты выпуска выпадает на следующий месяц
+    # и отбрасывается, даже если факт за него есть.
     no_fact = rows["actual"].isna()
-    in_month = rows["time"].dt.strftime("%Y-%m") == VALIDATION_MONTH
-    summary["rows_without_fact"] = int(no_fact.sum())
-    summary["rows_without_fact_outside_month"] = int((no_fact & ~in_month).sum())
-    summary["rows_without_fact_inside_month"] = int((no_fact & in_month).sum())
-    rows = rows[~no_fact].reset_index(drop=True)
+    in_month = rows["time"].dt.strftime("%Y-%m") == month
+    summary = {"rows_outside_month": int((~in_month).sum()),
+               "rows_without_fact_inside_month": int((no_fact & in_month).sum())}
+    summary["rows_without_fact"] = summary["rows_outside_month"] + summary["rows_without_fact_inside_month"]
+    rows = rows[in_month & ~no_fact].reset_index(drop=True)
     summary["rows_with_fact"] = int(len(rows))
     per_hour = rows.groupby(["time", "turbine"]).size()
+    summary["unique_turbine_hours"] = int(len(per_hour))
+    summary["max_turbine_hours"] = int(n_month_hours * len(TURBINES))
     summary["hours_seen_once"] = int((per_hour == 1).sum())
     summary["hours_seen_twice"] = int((per_hour == 2).sum())
-    log.info("Проверка: %d дат выпуска, %d строк прогноза, с фактом %d, без факта %d (из них вне месяца %d)",
-             summary["n_issue_dates"], summary["forecast_rows"], summary["rows_with_fact"],
-             summary["rows_without_fact"], summary["rows_without_fact_outside_month"])
+    summary["overall"] = group_metrics(rows)
+    summary["by_lead_day"] = {f"day{int(k)}": group_metrics(g) for k, g in rows.groupby("lead_day")}
+    summary["by_turbine"] = {str(int(k)): group_metrics(g) for k, g in rows.groupby("turbine")}
     return rows, summary
+
+
+def _log_metrics(label: str, summary: dict) -> None:
+    for name, g in [("все", summary["overall"])] + \
+            [(f"день {k[-1]}", g) for k, g in summary["by_lead_day"].items()] + \
+            [(f"турбина {k}", g) for k, g in summary["by_turbine"].items()]:
+        log.info("%s, %s: модель MAE %s RMSE %s покрытие %s ширина %s | persistence MAE %s RMSE %s "
+                 "(строк %d) | кривая MAE %s RMSE %s покрытие %s",
+                 label, name, _f(g["model"]["mae"]), _f(g["model"]["rmse"]), _f(g["model"]["coverage_p10_p90"], 3),
+                 _f(g["model"]["mean_width_p10_p90"], 3), _f(g["persistence"]["mae"]),
+                 _f(g["persistence"]["rmse"]), g["persistence"]["rows"], _f(g["power_curve"]["mae"]),
+                 _f(g["power_curve"]["rmse"]), _f(g["power_curve"]["coverage_p10_p90"], 3))
 
 
 # ---------------------------------------------------------------- отчёт
@@ -252,8 +280,35 @@ def _ratio_sentence(model_mae, other_mae, other_name: str) -> str:
             f"на тех же строках.")
 
 
+def _independence_text(month: str) -> str:
+    """Абзац о том, где валидация, а где независимый тест."""
+    if month == INDEPENDENT_TEST_MONTH:
+        return (f"Месяц {month} это независимый тест. Версия модели, её признаки и параметры выбирались по "
+                f"проверке на {VALIDATION_MONTH}. {month} в этом выборе не участвовал. Модель для этой проверки "
+                f"обучена заново без {month} и без {VALIDATION_MONTH}, в той же конфигурации. Проверка на "
+                f"{VALIDATION_MONTH} это валидация, её числа в {ARTIFACTS}/report.md. Из этой папки удалены "
+                "модели и validation.csv, оставлены только metrics.json и report.md.")
+    if month == VALIDATION_MONTH:
+        text = (f"По {month} выбиралась версия модели, поэтому эта проверка это валидация. Независимый тест "
+                f"сделан на {INDEPENDENT_TEST_MONTH}: модель той же конфигурации обучена только на часах до этого "
+                f"месяца, и на нём версия не выбиралась. Его числа лежат в {INDEPENDENT_TEST_DIR}/report.md.")
+        path = Path(INDEPENDENT_TEST_DIR) / "metrics.json"
+        try:
+            t = json.loads(path.read_text(encoding="utf-8"))["validation"]["overall"]
+            text += (f" Там MAE модели {_f(t['model']['mae'])}, покрытие p10–p90 "
+                     f"{_f(t['model']['coverage_p10_p90'], 3)}, MAE кривой мощности {_f(t['power_curve']['mae'])}, "
+                     f"MAE persistence {_f(t['persistence']['mae'])}.")
+        except (OSError, KeyError, ValueError):
+            pass
+        return text
+    return (f"Проверка на {month} сделана отдельно от основной; основная валидация на {VALIDATION_MONTH}, "
+            f"её числа в {ARTIFACTS}/report.md.")
+
+
 def write_report(path: Path, m: dict) -> None:
     d, al, v, mp = m["data"], m["time_alignment"], m["validation"], m["model"]
+    vu = m.get("validation_unfiltered")
+    month = m["validation_month"]
     per = al["periods"]
     L = []
     L.append("# Прогноз выработки ветростанции: как обучена модель и как она проверена\n")
@@ -308,7 +363,7 @@ def write_report(path: Path, m: dict) -> None:
              f"значения мощности и {d['removed_downtime_hours']} часов вероятного простоя (замеренный ветер "
              "6 м/с и больше при мощности не выше 0,01 номинала три часа подряд и дольше). "
              f"Часов факта, для которых в архиве прогнозов погоды нет строки: {d['rows_without_weather']}; "
-             f"они в обучение не вошли. Часов факта в месяце проверки {VALIDATION_MONTH} по двум турбинам: "
+             f"они в обучение не вошли. Часов факта в месяце проверки {month} по двум турбинам: "
              f"{d['validation_month_rows']}; они тоже отложены и в обучение не вошли.\n")
     L.append(f"Архив прогнозов погоды: часов {m['weather']['hours']}, с {m['weather']['first']} по "
              f"{m['weather']['last']}, пустых значений {m['weather']['nan_values']}.\n")
@@ -370,7 +425,7 @@ def write_report(path: Path, m: dict) -> None:
     if any(ap.values()):
         L.append(f"Применённые сдвиги: {PERIOD_NAMES['before']} {ap['before']:+d} ч, {PERIOD_NAMES['after']} "
                  f"{ap['after']:+d} ч. При обучении прогноз погоды на час t+k ставится в строку замера часа t. "
-                 "При проверке на январе прогноз на час t сравнивается с фактом часа t−k.\n")
+                 "При проверке прогноз на час t сравнивается с фактом часа t−k.\n")
         if ap["after"] != 0:
             L.append("Важно: агент и model/predict.py этот сдвиг сами не применяют. Прогноз агента на час t "
                      f"соответствует часу t{ap['after']:+d} по часам SCADA.\n")
@@ -405,14 +460,17 @@ def write_report(path: Path, m: dict) -> None:
     L.append(f"Кривая мощности: бины прогноза ветра на 100 м шириной {PowerCurveModel.BIN_WIDTH} м/с, в каждом "
              "бине квантили выработки 0.1, 0.5 и 0.9, отдельно по турбинам.\n")
 
-    L.append(f"## Проверка на {VALIDATION_MONTH}\n")
+    L.append(f"## Проверка на {month}\n")
+    first_day, _ = _validation_bounds(month)
+    L.append(f"Модель этой проверки обучена только на часах до {first_day.strftime('%Y-%m-%d')}. " +
+             _independence_text(month) + "\n")
     L.append(f"Дат выпуска {v['n_issue_dates']}, строк прогноза {v['forecast_rows']} (48 часов × 2 турбины на каждую "
-             f"дату). Строк, сопоставленных с фактом: {v['rows_with_fact']}. Строк без факта: "
+             f"дату). Строк, сопоставленных с фактом: {v['rows_with_fact']}. Строк, не вошедших в проверку: "
              f"{v['rows_without_fact']}. Из них за пределами месяца проверки (день 2 последней даты выпуска): "
-             f"{v['rows_without_fact_outside_month']}; внутри месяца (час убран фильтром или замеров нет): "
+             f"{v['rows_outside_month']}; внутри месяца (час убран фильтром или замеров нет): "
              f"{v['rows_without_fact_inside_month']}. Часов турбины, которые встречаются в проверке дважды "
              f"(как день 1 и как день 2): {v['hours_seen_twice']}; один раз: {v['hours_seen_once']}. Первый день "
-             "месяца покрыт только как день 1, потому что прогноза с датой выпуска накануне в кэше нет. "
+             "месяца покрыт только как день 1, потому что дата выпуска накануне в проверку не входит. "
              "Источник погоды по строкам: "
              + ", ".join(f"{k} {n}" for k, n in v["sources"].items()) + ".\n")
     L.append("Все ошибки в долях номинальной мощности: 0.1 означает 10% номинала. Покрытие это доля часов, "
@@ -447,6 +505,28 @@ def write_report(path: Path, m: dict) -> None:
     L.append("Сравнение с кривой мощности по MAE. Модель точнее кривой в срезах: "
              f"{', '.join(better) if better else 'ни в одном'}. Модель не точнее кривой в срезах: "
              f"{', '.join(not_better) if not_better else 'ни в одном'}.\n")
+    L.append(f"Уникальных пар турбина–час в проверке {v['unique_turbine_hours']} из {v['max_turbine_hours']} возможных "
+             f"(часов в месяце × 2 турбины). Число строк проверки {v['rows_with_fact']} больше, потому что строка это "
+             "запись «дата выпуска, час, турбина». Один и тот же час проверяется двумя выпусками: как день 1 "
+             "(прогноз накануне) и как день 2 (прогноз за двое суток). Persistence для дня 2 берёт факт дня "
+             "выпуска D в тот же час. Факт дня D+1 для него не используется, потому что в день выпуска он ещё "
+             "неизвестен. Так что это честное «послезавтра как сегодня».\n")
+    if vu:
+        L.append("Фильтр простоев и неполных часов применён и к проверке. Чтобы было видно, как это влияет на "
+                 "числа, те же прогнозы сопоставлены со всеми часами, где есть факт мощности, без фильтра. "
+                 "Часы, где замеров нет совсем, в обоих вариантах отсутствуют.\n")
+        L.append("| Вариант | Срез | Пар турбина–час | Строк | MAE модели | RMSE модели | Покрытие | Ширина | "
+                 "MAE кривой | MAE persistence |")
+        L.append("|---|---|---|---|---|---|---|---|---|---|")
+        for label, src in (("С фильтром", v), ("Без фильтра", vu)):
+            slices = [("Все", src["overall"])] + [(f"День {k[-1]}", src["by_lead_day"][k])
+                                                  for k in sorted(src["by_lead_day"])]
+            for name, g in slices:
+                L.append(f"| {label} | {name} | {src['unique_turbine_hours'] if name == 'Все' else ''} | "
+                         f"{g['rows']} | {_f(g['model']['mae'])} | {_f(g['model']['rmse'])} | "
+                         f"{_f(g['model']['coverage_p10_p90'], 3)} | {_f(g['model']['mean_width_p10_p90'], 3)} | "
+                         f"{_f(g['power_curve']['mae'])} | {_f(g['persistence']['mae'])} |")
+        L.append("")
     L.append("## Что пробовали\n")
     L.append("Первая версия училась только на архиве самых свежих прогнозов, и на январе её MAE был на уровне "
              "кривой мощности. Текущая версия учится ещё и на прогнозах за сутки и за двое суток, то есть на том "
@@ -463,18 +543,22 @@ def write_report(path: Path, m: dict) -> None:
                  "суток.\n")
 
     L.append("## Оговорки\n")
-    L.append("- Факта за февраль 2026 нет. Проверка сделана на одном месяце, январе 2026. Это зима; как модель "
-             "ведёт себя весной и летом, эта проверка не показывает.")
+    L.append(f"- Факта за февраль 2026 нет. Проверка в этом отчёте сделана на одном месяце, {month}. Это зима; "
+             "как модель ведёт себя весной и летом, эта проверка не показывает.")
     L.append("- Сервис previous-runs отдаёт прогноз, известный накануне (день 1) и за двое суток (день 2). В какой "
              "час дня выпуска этот запуск погодной модели реально был бы доступен, по данным сервиса не видно.")
     L.append("- Прогнозы за сутки и за двое суток есть только с 2024-03-01. Период до этой даты представлен в "
              "обучении только архивом самых свежих прогнозов.")
     L.append("- Persistence берёт факт за весь день выпуска D. В реальный момент выпуска вторая половина дня D "
              "ещё неизвестна, так что эта точка отсчёта здесь немного сильнее, чем была бы на практике.")
-    L.append("- Часы простоя и неполные часы убраны и из обучения, и из проверки. Метрики описывают исправную "
-             "турбину. Отключения и ограничения мощности модель не предсказывает.")
-    L.append(f"- Сохранённые модели обучены без {VALIDATION_MONTH}. Агент в феврале работает с моделями, "
-             "которые январь не видели.")
+    L.append("- Часы простоя и неполные часы убраны из обучения. В основной таблице они убраны и из проверки, "
+             "сравнение без фильтра дано выше. Отключения и ограничения мощности модель не предсказывает.")
+    if month == VALIDATION_MONTH:
+        L.append(f"- Сохранённые модели обучены без {month}. Агент в феврале работает с моделями, "
+                 "которые январь не видели.")
+    else:
+        L.append("- Самопроверка сдвига времени считалась по всей истории, включая месяц проверки. Она дала "
+                 "сдвиг 0, так что на обучение это не повлияло.")
     L.append("- Погода берётся в одной точке на обе турбины. Различие турбин модель учитывает только через "
              "признак номера турбины.")
     L.append("- Выработка дана в долях номинала; номинальная мощность в данных не указана, поэтому ошибки "
@@ -499,16 +583,19 @@ def _json_safe(x):
     return x
 
 
-def train(train_start: str | None = None, artifacts_dir: str | None = None) -> dict:
-    """Полный цикл: данные, самопроверка времени, обучение, проверка на месяце VALIDATION_MONTH, артефакты.
-    Возвращает метрики (то же, что пишется в metrics.json)."""
+def train(train_start: str | None = None, artifacts_dir: str | None = None,
+          validation_month: str | None = None) -> dict:
+    """Полный цикл: данные, самопроверка времени, обучение на часах до начала месяца проверки, проверка на
+    месяце проверки «как агент», артефакты. Возвращает метрики (то же, что пишется в metrics.json)."""
     t_start = time.perf_counter()
     train_start = train_start or TRAIN_START
+    month = validation_month or VALIDATION_MONTH
     art = Path(artifacts_dir or ARTIFACTS)
     art.mkdir(parents=True, exist_ok=True)
-    _, last_day = _validation_bounds()
+    first_day, last_day = _validation_bounds(month)
+    month_start = pd.Timestamp(first_day, tz=TZ)
     weather_end = last_day.strftime("%Y-%m-%d")
-    log.info("Старт обучения: история с %s, месяц проверки %s, артефакты в %s", train_start, VALIDATION_MONTH, art)
+    log.info("Старт обучения: история с %s, месяц проверки %s, артефакты в %s", train_start, month, art)
 
     # 1. Факт турбин и фильтр.
     hourly = load_hourly()
@@ -538,15 +625,15 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
     # (давность 1 и 2) склеиваются с одним и тем же фактом; месяц проверки откладывается.
     joined = join_features(facts, weather, applied)
     data["rows_without_weather"] = int(len(facts) - len(joined))
-    in_val = joined["time"].dt.strftime("%Y-%m") == VALIDATION_MONTH
-    archive_train = joined[~in_val]
+    in_val = joined["time"].dt.strftime("%Y-%m") == month
+    archive_train = joined[joined["time"] < month_start]
     data["validation_month_rows"] = int(in_val.sum())
     prev_weather = get_previous_runs_weather(train_start, weather_end)
     prev_weather = prev_weather[prev_weather["ws100"].notna()]
     data["previous_runs_weather_rows"] = int(len(prev_weather))
     if len(prev_weather):
         prev = join_features(facts, prev_weather, applied)
-        prev_train = prev[prev["time"].dt.strftime("%Y-%m") != VALIDATION_MONTH]
+        prev_train = prev[prev["time"] < month_start]
     else:
         prev_train = archive_train.iloc[0:0]
     train_df = pd.concat([archive_train, prev_train], ignore_index=True)
@@ -581,7 +668,19 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
     log.info("Модели и кривая мощности сохранены в %s", art)
 
     # 6. Проверка на месяце проверки так, как работает агент.
-    rows, val_summary = validate(models, curve, facts, applied)
+    forecast, val_summary = forecast_month(models, curve, month)
+    rows, matched = match_facts(forecast, facts, applied, month)
+    val_summary.update(matched)
+    log.info("Проверка: %d дат выпуска, %d строк прогноза, с фактом %d, отброшено %d (из них вне месяца %d); "
+             "уникальных пар турбина–час %d из %d", val_summary["n_issue_dates"], val_summary["forecast_rows"],
+             val_summary["rows_with_fact"], val_summary["rows_without_fact"],
+             val_summary["rows_outside_month"], val_summary["unique_turbine_hours"],
+             val_summary["max_turbine_hours"])
+    # Те же прогнозы на всех часах с фактом, без фильтра простоев и неполных часов.
+    raw_facts = hourly[hourly["power"].notna()]
+    _, unfiltered = match_facts(forecast, raw_facts, applied, month)
+    log.info("Проверка без фильтра: с фактом %d строк, уникальных пар турбина–час %d",
+             unfiltered["rows_with_fact"], unfiltered["unique_turbine_hours"])
     # Сверка: те же часы месяца проверки, признаки из архива прогнозов (как на обучении).
     val_df = joined[in_val]
     if len(val_df):
@@ -598,20 +697,10 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
             "rows": int(len(a)), "model_mae": _mae(a["p50"] - a["actual"]),
             "curve_mae": _mae(a["curve"] - a["actual"]), "model_coverage_p10_p90": cov}
         log.info("Сверка на архиве прогнозов за %s: модель MAE %s, кривая MAE %s, покрытие %s",
-                 VALIDATION_MONTH, _f(a["p50"].sub(a["actual"]).abs().mean()),
+                 month, _f(a["p50"].sub(a["actual"]).abs().mean()),
                  _f(a["curve"].sub(a["actual"]).abs().mean()), _f(cov, 3))
-    val_summary["overall"] = group_metrics(rows)
-    val_summary["by_lead_day"] = {f"day{int(k)}": group_metrics(g) for k, g in rows.groupby("lead_day")}
-    val_summary["by_turbine"] = {str(int(k)): group_metrics(g) for k, g in rows.groupby("turbine")}
-    for name, g in [("все", val_summary["overall"])] + \
-            [(f"день {k[-1]}", g) for k, g in val_summary["by_lead_day"].items()] + \
-            [(f"турбина {k}", g) for k, g in val_summary["by_turbine"].items()]:
-        log.info("Январь, %s: модель MAE %s RMSE %s покрытие %s ширина %s | persistence MAE %s RMSE %s "
-                 "(строк %d) | кривая MAE %s RMSE %s покрытие %s",
-                 name, _f(g["model"]["mae"]), _f(g["model"]["rmse"]), _f(g["model"]["coverage_p10_p90"], 3),
-                 _f(g["model"]["mean_width_p10_p90"], 3), _f(g["persistence"]["mae"]),
-                 _f(g["persistence"]["rmse"]), g["persistence"]["rows"], _f(g["power_curve"]["mae"]),
-                 _f(g["power_curve"]["rmse"]), _f(g["power_curve"]["coverage_p10_p90"], 3))
+    _log_metrics(f"Проверка {month}", val_summary)
+    _log_metrics(f"Без фильтра {month}", unfiltered)
 
     # 7. Артефакты.
     out = rows.copy()
@@ -621,7 +710,7 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
 
     metrics = {
         "train_start": train_start,
-        "validation_month": VALIDATION_MONTH,
+        "validation_month": month,
         "data": data,
         "weather": weather_info,
         "time_alignment": alignment,
@@ -629,6 +718,7 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
                   "features": FEATURES, "params": MODEL_PARAMS, "train_seconds": train_seconds,
                   "iterations": {name: int(model.n_iter_) for name, model in models.items()}},
         "validation": val_summary,
+        "validation_unfiltered": unfiltered,
     }
     metrics["total_seconds"] = time.perf_counter() - t_start
     metrics = _json_safe(metrics)

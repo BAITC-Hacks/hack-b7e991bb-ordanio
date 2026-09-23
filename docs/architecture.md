@@ -134,7 +134,8 @@ def ask(question: str, history: list) -> str
 ```
 
 Формат `output/forecasts/forecast_<issue_date>.csv`, колонки строго:
-`issue_date, target_time, lead_hours, turbine, ws100_forecast, temp_forecast, p10, p50, p90, confidence, note`
+`issue_date, target_time, lead_hours, issue_timestamp, weather_lead_hours, weather_run_time, turbine, ws100_forecast, temp_forecast, p10, p50, p90, confidence, note`
+(с 23.09 16:00: `issue_timestamp` = D 23:59 местного, `weather_lead_hours` 24 для D+1 и 48 для D+2, `weather_run_time` = target_time − упреждение; агент проверяет weather_run_time ≤ issue_timestamp)
 (`confidence` ∈ {"ok", "low"}; 96 строк: 48 часов × 2 турбины; `target_time` в ISO с смещением).
 
 ## Веб: `web/app.py`, `web/static/index.html`
