@@ -33,7 +33,7 @@
     --radius: 4px;
     --page-pad: 32px;
     --page-top: 32px;
-    --section-gap: 32px;
+    --section-gap: 56px;
     --section-pad: 24px;
     --control-h: 40px;
     --t: 140ms;
@@ -62,21 +62,25 @@
   .hero {
     position: relative; height: 70vh; min-height: 360px; overflow: hidden;
     display: flex; align-items: center; justify-content: center; text-align: center;
-    background: linear-gradient(160deg, #14201B 0%, #1E2E27 100%); color: #fff;
+    background: linear-gradient(180deg, #EAF1ED 0%, #F6F7F5 100%); color: var(--text);
   }
   .hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .hero-shade { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); display: none; }
+  /* Светлая подложка поверх видео: ролик уходит в фон страницы без стыка */
+  .hero-shade {
+    position: absolute; inset: 0; display: none;
+    background: linear-gradient(to bottom, rgba(246, 247, 245, .35) 0, rgba(246, 247, 245, .35) calc(100% - 220px), #F6F7F5 100%);
+  }
   .hero.has-video .hero-shade { display: block; }
   .hero-content { position: relative; z-index: 1; padding: 0 var(--page-pad); max-width: 900px; }
-  .hero-title { font-size: 56px; line-height: 62px; font-weight: 500; letter-spacing: -0.02em; }
-  .hero-subtitle { font-size: 17px; line-height: 26px; color: rgba(255, 255, 255, .82); margin-top: 16px; }
+  .hero-title { font-size: 48px; line-height: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--text); text-shadow: 0 1px 12px rgba(255, 255, 255, .8); }
+  .hero-subtitle { font-size: 17px; line-height: 26px; color: var(--muted); margin-top: 16px; }
   .hero-cta {
     display: inline-flex; align-items: center; height: 40px; padding: 0 16px; margin-top: 32px;
     border-radius: var(--radius); background: var(--accent); color: #fff; text-decoration: none;
     font-size: 14px; font-weight: 500; transition: background-color var(--t);
   }
   .hero-cta:hover { background: var(--accent-dark); color: #fff; }
-  .hero-note { font-size: 12px; line-height: 18px; color: rgba(255, 255, 255, .6); margin-top: 24px; }
+  .hero-note { font-family: var(--mono); font-size: 12px; line-height: 18px; color: var(--muted); margin-top: 24px; }
   @media (max-width: 640px) {
     .hero { height: 50vh; min-height: 300px; }
     .hero-title { font-size: 34px; line-height: 40px; }
@@ -188,18 +192,18 @@
   .fact ul { margin: 0; padding-left: 18px; }
 
   /* Графики */
-  .chart { margin-top: 16px; position: relative; background: #14201B; border-radius: var(--radius); padding: 12px 16px 8px; overflow-x: auto; }
-  .chart h3 { color: #E6ECE8; }
-  .p50-line { filter: drop-shadow(0 0 4px rgba(127, 209, 168, .6)); }
+  .chart { margin-top: 16px; position: relative; background: #FFFFFF; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px 8px; overflow-x: auto; }
+  .chart h3 { color: var(--text); }
+  .p50-line { filter: drop-shadow(0 0 4px rgba(39, 102, 83, .35)); }
   .chart-tip {
     position: absolute; z-index: 2; pointer-events: none; min-width: 150px;
-    background: #1E2E27; border: 1px solid #2A3A32; border-radius: var(--radius); padding: 12px;
-    font-size: 12px; line-height: 18px; color: #E6ECE8;
+    background: #FFFFFF; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px;
+    font-size: 12px; line-height: 18px; color: var(--text);
   }
   .tip-time { font-family: var(--mono); font-weight: 500; margin-bottom: 4px; }
-  .tip-row { display: flex; justify-content: space-between; gap: 16px; font-family: var(--mono); color: #B8C4BE; }
-  .tip-row.tip-main { color: #7FD1A8; font-weight: 500; }
-  .tip-wind { margin-top: 4px; color: #B8C4BE; }
+  .tip-row { display: flex; justify-content: space-between; gap: 16px; font-family: var(--mono); color: var(--muted); }
+  .tip-row.tip-main { color: var(--accent); font-weight: 500; }
+  .tip-wind { margin-top: 4px; color: var(--muted); }
   .hover-area { cursor: crosshair; }
   .chart h3 { margin: 8px 0 4px; }
   .chart svg { display: block; font-family: var(--mono); }
@@ -283,6 +287,29 @@
     .summary-numbers > div:nth-child(odd) { padding-left: 0; border-left: 0; }
     .summary-value { font-size: 32px; line-height: 38px; }
   }
+
+  /* ===== Уточнения штаба: заставка слева, надзаголовки, кнопки, воздух, без анимации ===== */
+  .hero { justify-content: flex-start; text-align: left; }
+  .hero-content { width: 100%; max-width: 1240px; margin: 0 auto; padding: 0 var(--page-pad); }
+  .hero-title { font-size: 52px; line-height: 58px; font-weight: 500; letter-spacing: -0.02em; max-width: 900px; }
+  .hero-accent { color: var(--accent); }
+  .hero-subtitle { font-size: 18px; line-height: 28px; color: var(--muted); max-width: 640px; }
+  .hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-top: 32px; }
+  .hero-actions .hero-cta { margin-top: 0; }
+  .hero-link { color: var(--accent); font-weight: 500; text-decoration: none; }
+  .hero-link:hover { color: var(--accent-dark); text-decoration: underline; }
+  .facts-strip { font-family: var(--mono); font-size: 13px; line-height: 20px; color: var(--muted); margin-bottom: 24px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; line-height: 18px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .eyebrow-inner { margin-top: 40px; }
+  h2, .section-title { font-size: 22px; line-height: 30px; font-weight: 600; margin: 0 0 16px; }
+  button, .hero-cta { border-radius: 6px; box-shadow: none; }
+  button.secondary { height: 40px; }
+  .hints button.secondary { height: auto; min-height: 40px; }
+  .spinner { display: none; }
+  @media (max-width: 640px) {
+    .hero-title { font-size: 32px; line-height: 38px; }
+    .hero-subtitle { font-size: 16px; line-height: 24px; }
+  }
 </style>
 </head>
 <body>
@@ -291,14 +318,19 @@
   <video id="hero-video" class="hero-video hidden" autoplay muted loop playsinline></video>
   <div class="hero-shade"></div>
   <div class="hero-content">
-    <div class="hero-title">Прогноз выработки ВЭС</div>
-    <div class="hero-subtitle">Агент на архивных прогнозах погоды · две турбины · горизонт 48 часов</div>
-    <a href="#tool" id="hero-cta" class="hero-cta">К прогнозу</a>
+    <div class="hero-title">Прогноз выработки ВЭС <span class="hero-accent">на 48 часов вперёд</span></div>
+    <div class="hero-subtitle">Агент на архивных прогнозах погоды · две турбины</div>
+    <div class="hero-actions">
+      <a href="#tool" id="hero-cta" class="hero-cta">К прогнозу</a>
+      <a href="#how" id="hero-how" class="hero-link">Как это работает →</a>
+    </div>
     <div class="hero-note">Самрук-Казына · HackAlem AI 2026</div>
   </div>
 </div>
 
 <main id="tool">
+  <!-- Полоса фактов: число выпусков и MAE из данных, остальное текстом -->
+  <div id="facts-strip" class="facts-strip">29 дат выпуска · 48 часов по каждой турбине · MAE — на январе · Open-Meteo, scikit-learn, Docker</div>
 
   <!-- Шапка: название слева, дата выпуска и основная кнопка справа -->
   <header class="topbar">
@@ -320,7 +352,7 @@
       <div id="status" class="status"><span class="pill">Загружаю состояние…</span></div>
       <a href="#" id="tour-link" class="small">Как пользоваться</a>
       <button id="run-all-btn" type="button" class="secondary">Прогнать весь февраль</button>
-      <details class="how">
+      <details class="how" id="how">
         <summary>Как работает расчёт</summary>
         <div>Доступны даты выпуска с 31.01.2026 по 28.02.2026. Прогноз строится на двое суток, следующих за датой выпуска, по часам, в долях номинальной мощности: 0 — турбина стоит, 1 — работает на полную. Время местное (UTC+5). Прогон всего февраля пишет сводки дней по шаблону; сводка от модели OpenAI строится для одного дня по кнопке «Сформировать прогноз» (при наличии ключа).</div>
       </details>
@@ -341,6 +373,7 @@
 
   <!-- Результат: шаги, сводка, числа, графики, таблица -->
   <section id="result-section" class="hidden">
+    <div class="eyebrow">Прогноз</div>
     <h2 id="result-title">Прогноз</h2>
     <div id="steps-block" class="hidden">
       <h3>Что сделал агент</h3>
@@ -351,30 +384,32 @@
 
     <h3>График по турбинам</h3>
     <div class="legend">
-      <span><span class="swatch" style="background:#7FD1A8;height:3px;vertical-align:3px"></span>p50: медианный прогноз</span>
-      <span><span class="swatch" style="background:rgba(127,209,168,.35);border:1px solid #14201B"></span>p10–p90: оценочный диапазон</span>
-      <span><span class="swatch" style="background:#F2C27B;width:7px;height:7px;border-radius:50%"></span>низкая уверенность</span>
-      <span><span class="swatch" style="background:#B8C4BE;height:1px;vertical-align:4px"></span>ветер на 100 м, м/с (правая ось)</span>
-      <span><span class="swatch" style="background:#0F1915"></span>ночь, 18:00–06:00</span>
+      <span><span class="swatch" style="background:#276653;height:3px;vertical-align:3px"></span>p50: медианный прогноз</span>
+      <span><span class="swatch" style="background:rgba(39,102,83,.12)"></span>p10–p90: оценочный диапазон</span>
+      <span><span class="swatch" style="background:#8A5A16;width:7px;height:7px;border-radius:50%"></span>низкая уверенность</span>
+      <span><span class="swatch" style="background:#8A9A92;height:1px;vertical-align:4px"></span>ветер на 100 м, м/с (правая ось)</span>
+      <span><span class="swatch" style="background:#EEF1EE;outline:1px solid #DCE2DD"></span>ночь, 18:00–06:00</span>
     </div>
     <div id="validation-brief" class="validation-brief hidden"></div>
     <div id="charts"></div>
 
     <!-- Что изменилось при пересчёте: сравнение с выпуском предыдущего дня на общих часах -->
     <div id="changes-panel">
-    <h3>Что изменилось при пересчёте</h3>
+    <div class="eyebrow eyebrow-inner">Пересчёт</div>
+    <h3 class="section-title">Что изменилось при пересчёте</h3>
     <div class="muted small">Сутки после даты выпуска прогнозировались дважды: <span class="lead-yesterday">вчера</span> и <span class="lead-today">сегодня</span>. Здесь видно, насколько сегодняшний прогноз поправил вчерашний.</div>
     <div class="legend">
-      <span><span class="swatch" style="border-top:2px dashed #B8C4BE;height:0;vertical-align:3px"></span><span class="lead-yesterday">вчера</span></span>
-      <span><span class="swatch" style="background:#7FD1A8;height:3px;vertical-align:3px"></span><span class="lead-today">сегодня</span></span>
-      <span><span class="swatch" style="background:rgba(242,194,123,.45)"></span>пересчитано больше чем на 0.15</span>
-      <span><span class="swatch" style="background:rgba(127,209,168,.45)"></span>сегодня выше</span>
-      <span><span class="swatch" style="background:rgba(242,194,123,.45)"></span>сегодня ниже</span>
+      <span><span class="swatch" style="border-top:2px dashed #8A9A92;height:0;vertical-align:3px"></span><span class="lead-yesterday">вчера</span></span>
+      <span><span class="swatch" style="background:#276653;height:3px;vertical-align:3px"></span><span class="lead-today">сегодня</span></span>
+      <span><span class="swatch" style="background:rgba(242,194,123,.35)"></span>пересчитано больше чем на 0.15</span>
+      <span><span class="swatch" style="background:rgba(39,102,83,.18)"></span>сегодня выше</span>
+      <span><span class="swatch" style="background:#FFF3D6;outline:1px solid #DCE2DD"></span>сегодня ниже</span>
     </div>
     <div id="changes"></div>
     </div>
 
-    <h3>Таблица прогноза</h3>
+    <div class="eyebrow eyebrow-inner">Таблица</div>
+    <h3 class="section-title">Таблица прогноза</h3>
     <div class="row">
       <a id="csv-link" href="#">Скачать CSV</a>
       <a href="/api/forecasts.csv">Скачать все прогнозы одним CSV</a>
@@ -396,6 +431,7 @@
 
   <!-- Проверка модели на январе -->
   <section id="validation-section">
+    <div class="eyebrow">Проверка</div>
     <h2>Проверка на январе</h2>
     <p class="muted" style="margin:0">Модель проверена на январе 2026, который не участвовал в обучении. Рядом две точки отсчёта: «завтра как сегодня» (persistence) и кривая мощности по ветру (curve).</p>
     <div id="validation-body"><p class="muted">Загружаю…</p></div>
@@ -403,6 +439,7 @@
 
   <!-- Журнал агента -->
   <section>
+    <div class="eyebrow">Журнал</div>
     <details id="journal-details">
       <summary>Журнал агента</summary>
       <pre id="journal">Загружаю…</pre>
@@ -411,6 +448,7 @@
 
   <!-- Вопросы агенту: блок скрыт, пока не известно, что чат включён -->
   <section id="chat-section" style="display:none">
+    <div class="eyebrow">Агент</div>
     <h2>Спросить агента</h2>
     <p class="muted small" style="margin-top:0">Например: «Сколько выдаст турбина 1 по прогнозу за 2026-02-05?» или «Почему часы низкой уверенности?»</p>
     <div id="chat-log" class="chat-log"></div>
@@ -430,6 +468,7 @@
 
   <!-- О проекте: задача, метод, проверка -->
   <section id="about-section" class="about">
+    <div class="eyebrow">О проекте</div>
     <h2>О проекте</h2>
     <p><strong>Задача.</strong> Ветростанция должна каждый день заранее сообщать почасовую выработку двух турбин на завтра и послезавтра: под прогноз планируется энергосистема, а расхождение с фактом оплачивается на балансирующем рынке. Организаторы выдали три года 10-минутных замеров и попросили систему, которая сама берёт прогноз погоды, известный на момент выпуска, считает выработку и повторяет расчёт каждый день февраля 2026.</p>
     <p><strong>Метод.</strong> Модель учится на связке «прогноз погоды на этот час → фактическая выработка», а не на измеренном ветре, и выдаёт на каждый час три оценки p10, p50, p90. Агент на день выпуска получает прогноз с упреждением <span id="about-leads">48 и 72 часа</span>, считает 48 часов по каждой турбине, сравнивает с прогнозом предыдущего дня, отмечает часы повышенной неопределённости и ведёт журнал.</p>
@@ -546,6 +585,8 @@ async function loadStatus() {
     lastStatus = status;
     renderStatus(status);
     renderModelInfo(status);
+    factsReleases = Array.isArray(status.forecasts_done) ? status.forecasts_done.length : 0;
+    renderFactsStrip();
     // Пока модель обучается — опрашиваем каждые 5 секунд.
     if (status.training) {
       wasTraining = true;
@@ -828,9 +869,10 @@ function renderCharts(rows) {
 }
 
 // Тёмная тема графиков
-const DARK = {
-  bg: "#14201B", text: "#E6ECE8", grid: "#2A3A32", night: "#0F1915", accent: "#7FD1A8",
-  wind: "#B8C4BE", amber: "#F2C27B",
+// Светлая палитра графиков (спецификация, раздел 2)
+const CHART_COLORS = {
+  bg: "#FFFFFF", text: "#5E6B64", strong: "#202824", grid: "#E7EBE8", night: "#EEF1EE", dayLine: "#DCE2DD",
+  accent: "#276653", wind: "#8A9A92", low: "#8A5A16", below: "#FFF3D6", recalc: "#F2C27B",
 };
 const WIND_MAX = 20;       // правая ось ветра, м/с; выше обрезается по верху
 const CHART_H = 320;       // высота графика в пикселях
@@ -864,13 +906,13 @@ function buildChartSvg(data, geom) {
   const hourOf = (r) => { const m = /T(\d{2}):/.exec(String(r.target_time || "")); return m ? Number(m[1]) : null; };
   const dayOf = (r) => String(r.target_time || "").slice(0, 10);
   const gradId = "p50grad-" + (++chartSeq);
-  const T = `font-size="11" fill="${DARK.text}"`;
+  const T = `font-size="11" fill="${CHART_COLORS.text}"`;
 
   const parts = [];
   parts.push(`<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="${DARK.accent}" stop-opacity="0.30"/><stop offset="1" stop-color="${DARK.accent}" stop-opacity="0"/>
+    <stop offset="0" stop-color="${CHART_COLORS.accent}" stop-opacity="0.22"/><stop offset="1" stop-color="${CHART_COLORS.accent}" stop-opacity="0"/>
   </linearGradient></defs>`);
-  parts.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="${DARK.bg}"/>`);
+  parts.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="${CHART_COLORS.bg}"/>`);
   // Ночные часы 00–06 и 18–24 чуть темнее фона, соседние часы склеиваются
   let nightStart = null;
   data.forEach((r, i) => {
@@ -880,20 +922,20 @@ function buildChartSvg(data, geom) {
     if ((!night || i === n - 1) && nightStart !== null) {
       const endIdx = night ? i : i - 1;
       const x0 = Math.max(left, x(nightStart) - step / 2), x1 = Math.min(W - right, x(endIdx) + step / 2);
-      parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="${DARK.night}"/>`);
+      parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="${CHART_COLORS.night}"/>`);
       nightStart = null;
     }
   });
   // Сетка и левая ось
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
-    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${DARK.grid}" stroke-width="1"/>`);
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${CHART_COLORS.grid}" stroke-width="1"/>`);
     parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" ${T}>${v}</text>`);
   }
   // Граница суток и дата сверху
   data.forEach((r, i) => {
     if (i === 0 || hourOf(r) !== 0) return;
     const bx = (x(i) - step / 2).toFixed(1);
-    parts.push(`<line x1="${bx}" x2="${bx}" y1="${top}" y2="${top + plotH}" stroke="${DARK.grid}" stroke-width="1"/>`);
+    parts.push(`<line x1="${bx}" x2="${bx}" y1="${top}" y2="${top + plotH}" stroke="${CHART_COLORS.dayLine}" stroke-width="1"/>`);
     parts.push(`<text x="${(Number(bx) + 6).toFixed(1)}" y="${top - 10}" text-anchor="start" ${T}>${formatDay(r.target_time).slice(0, 5)}</text>`);
   });
   // Правая ось ветра
@@ -912,7 +954,7 @@ function buildChartSvg(data, geom) {
     // Коридор p10–p90
     const upper = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p90).toFixed(1)}`);
     const lower = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p10).toFixed(1)}`).reverse();
-    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="${DARK.accent}" fill-opacity="0.14" stroke="none"/>`);
+    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="${CHART_COLORS.accent}" fill-opacity="0.12" stroke="none"/>`);
     // Градиентная заливка под p50
     const base = y(0).toFixed(1);
     const p50pts = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`);
@@ -920,13 +962,13 @@ function buildChartSvg(data, geom) {
     // Ветер на 100 м тонкой линией
     const windPoints = data.map((r, i) => (r.ws100_forecast === null || r.ws100_forecast === undefined || !Number.isFinite(Number(r.ws100_forecast)))
       ? null : `${x(i).toFixed(1)},${yWind(r.ws100_forecast).toFixed(1)}`).filter(Boolean).join(" ");
-    if (windPoints) parts.push(`<polyline points="${windPoints}" fill="none" stroke="${DARK.wind}" stroke-width="1" stroke-linejoin="round"/>`);
+    if (windPoints) parts.push(`<polyline points="${windPoints}" fill="none" stroke="${CHART_COLORS.wind}" stroke-width="1" stroke-linejoin="round"/>`);
     // Линия p50 — главная, со свечением
-    parts.push(`<polyline class="p50-line" points="${p50pts.join(" ")}" fill="none" stroke="${DARK.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`);
+    parts.push(`<polyline class="p50-line" points="${p50pts.join(" ")}" fill="none" stroke="${CHART_COLORS.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`);
     // Низкая уверенность — янтарные точки
     data.forEach((r, i) => {
       if (r.confidence === "low") {
-        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="3.5" fill="${DARK.amber}"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
+        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="3.5" fill="${CHART_COLORS.low}"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
       }
     });
     // Максимум и минимум p50 по каждым суткам: точка и число, подпись над максимумом и под минимумом
@@ -941,24 +983,24 @@ function buildChartSvg(data, geom) {
       }
       const mark = (i, above) => {
         const cx = x(i), cy = y(data[i].p50);
-        parts.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="${DARK.text}"/>`);
+        parts.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="${CHART_COLORS.strong}"/>`);
         // У верхнего края над точкой места нет: подпись справа ниже линии, чтобы не налезать на дату
         if (above && cy - 9 < top + 4) {
           const toLeft = cx + 60 > W - right;
-          parts.push(`<text x="${(toLeft ? cx - 8 : cx + 8).toFixed(1)}" y="${(cy + 18).toFixed(1)}" text-anchor="${toLeft ? "end" : "start"}" ${T} font-weight="500">${num(data[i].p50)}</text>`);
+          parts.push(`<text x="${(toLeft ? cx - 8 : cx + 8).toFixed(1)}" y="${(cy + 18).toFixed(1)}" text-anchor="${toLeft ? "end" : "start"}" font-size="11" fill="${CHART_COLORS.strong}" font-weight="500">${num(data[i].p50)}</text>`);
           return;
         }
         const tx = Math.min(Math.max(cx, left + 18), W - right - 18);
         const ty = above ? cy - 9 : Math.min(cy + 17, top + plotH + 14);
-        parts.push(`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" ${T} font-weight="500">${num(data[i].p50)}</text>`);
+        parts.push(`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="11" fill="${CHART_COLORS.strong}" font-weight="500">${num(data[i].p50)}</text>`);
       };
       mark(iMax, true);
       if (iMin !== iMax) mark(iMin, false);
     }
   }
-  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="${DARK.grid}"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="${CHART_COLORS.grid}"/>`);
   // Направляющая наведения и прозрачный слой для мыши и касаний
-  parts.push(`<line class="hover-guide" x1="0" x2="0" y1="${top}" y2="${top + plotH}" stroke="${DARK.wind}" stroke-width="1" visibility="hidden"/>`);
+  parts.push(`<line class="hover-guide" x1="0" x2="0" y1="${top}" y2="${top + plotH}" stroke="${CHART_COLORS.wind}" stroke-width="1" visibility="hidden"/>`);
   parts.push(`<rect class="hover-area" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/>`);
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="График прогноза на 48 часов">${parts.join("")}</svg>`;
 }
@@ -1072,15 +1114,15 @@ function buildChangesSvg(data, geom) {
   const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
   const y = (v) => top + (1 - clamp(v)) * plotH;
   const step = n > 1 ? plotW / (n - 1) : plotW;
-  const T = `font-size="11" fill="${DARK.text}"`;
+  const T = `font-size="11" fill="${CHART_COLORS.text}"`;
 
-  const parts = [`<rect x="0" y="0" width="${W}" height="${H}" fill="${DARK.bg}"/>`];
+  const parts = [`<rect x="0" y="0" width="${W}" height="${H}" fill="${CHART_COLORS.bg}"/>`];
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
-    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${DARK.grid}" stroke-width="1"/>`);
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${CHART_COLORS.grid}" stroke-width="1"/>`);
     parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" ${T}>${v}</text>`);
   }
   // Область между вчерашней и сегодняшней линией по отрезкам, с точкой пересечения
-  const UP = `fill="${DARK.accent}" fill-opacity="0.22"`, DOWN = `fill="${DARK.amber}" fill-opacity="0.22"`;
+  const UP = `fill="${CHART_COLORS.accent}" fill-opacity="0.18"`, DOWN = `fill="${CHART_COLORS.below}"`;
   const pt = (px, py) => `${px.toFixed(1)},${py.toFixed(1)}`;
   for (let i = 0; i + 1 < n; i++) {
     const t0 = clamp(data[i].today), t1 = clamp(data[i + 1].today);
@@ -1101,7 +1143,7 @@ function buildChangesSvg(data, geom) {
   data.forEach((p, i) => {
     if (Math.abs(p.today - p.yesterday) <= CHANGE_THRESHOLD) return;
     const x0 = Math.max(left, x(i) - step / 2), x1 = Math.min(W - right, x(i) + step / 2);
-    parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="${DARK.amber}" fill-opacity="0.18"><title>${formatTime(p.target_time)}: было ${num(p.yesterday)}, стало ${num(p.today)}</title></rect>`);
+    parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="${CHART_COLORS.recalc}" fill-opacity="0.35"><title>${formatTime(p.target_time)}: было ${num(p.yesterday)}, стало ${num(p.today)}</title></rect>`);
   });
   const every = labelEvery(plotW, n);
   data.forEach((p, i) => {
@@ -1109,9 +1151,9 @@ function buildChangesSvg(data, geom) {
     parts.push(`<text x="${x(i).toFixed(1)}" y="${H - 14}" text-anchor="middle" ${T}>${formatTime(p.target_time, false)}</text>`);
   });
   const line = (field) => data.map((p, i) => `${x(i).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
-  parts.push(`<polyline points="${line("yesterday")}" fill="none" stroke="${DARK.wind}" stroke-width="2" stroke-dasharray="6 4"/>`);
-  parts.push(`<polyline class="p50-line" points="${line("today")}" fill="none" stroke="${DARK.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`);
-  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="${DARK.grid}"/>`);
+  parts.push(`<polyline points="${line("yesterday")}" fill="none" stroke="${CHART_COLORS.wind}" stroke-width="2" stroke-dasharray="6 4"/>`);
+  parts.push(`<polyline class="p50-line" points="${line("today")}" fill="none" stroke="${CHART_COLORS.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="${CHART_COLORS.grid}"/>`);
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Сравнение со вчерашним выпуском">${parts.join("")}</svg>`;
 }
 
@@ -1188,6 +1230,8 @@ async function loadValidation() {
     box.innerHTML = renderValidation(data);
     renderSummaryCard(data);
     renderValidationBrief(data);
+    factsMae = Number(get(data, "metrics", "validation", "overall", "model", "mae") ?? NaN);
+    renderFactsStrip();
     renderAboutNumbers(data);
   } catch (e) {
     box.innerHTML = `<div class="info">${escapeHtml(e.message)}</div>`;
@@ -1209,6 +1253,14 @@ function renderAboutNumbers(data) {
   const dec = get(data, "extra", "artifacts_dec2025", "validation", "overall");
   set("about-dec-mae", get(dec, "model", "mae"));
   set("about-dec-curve", get(dec, "power_curve", "mae"));
+}
+
+// Полоса фактов под заставкой
+let factsReleases = 0, factsMae = NaN;
+function renderFactsStrip() {
+  const releases = factsReleases > 0 ? `${factsReleases} выпусков` : "29 дат выпуска";
+  const mae = Number.isFinite(factsMae) ? num(factsMae) : "—";
+  $("facts-strip").textContent = `${releases} · 48 часов по каждой турбине · MAE ${mae} на январе · Open-Meteo, scikit-learn, Docker`;
 }
 
 // Короткая строка у графиков: январская проверка из /api/validation, со ссылкой на подробную панель.
@@ -1530,6 +1582,11 @@ async function init() {
       if (lastChartRows.length) renderCharts(lastChartRows);
       if (lastChangesPairs) $("changes").innerHTML = changesHtml(lastChangesPairs, $("changes"));
     }, 150);
+  });
+  $("hero-how").addEventListener("click", (e) => {
+    e.preventDefault();
+    $("how").open = true;
+    $("how").scrollIntoView({ behavior: "smooth", block: "center" });
   });
   $("hero-cta").addEventListener("click", (e) => {
     e.preventDefault();
