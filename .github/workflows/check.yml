@@ -1,0 +1,47 @@
+# Проверка установки и основного сценария на трёх системах при каждой отправке в репозиторий:
+# чистая машина, Python 3.12, зависимости из requirements.txt, тест сценария (печатает PASS),
+# один день агента из кэша погоды, плюс сборка Docker-образа на Linux.
+name: Проверка запуска
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Тест на ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Установка зависимостей
+        run: pip install -r requirements.txt
+      - name: Тест сценария
+        env:
+          WEATHER_OFFLINE: "1"
+        run: pytest -q -s tests
+      - name: Один день агента из кэша
+        env:
+          WEATHER_OFFLINE: "1"
+        run: python -m agent.run --date 2026-02-05
+
+  docker:
+    name: Сборка Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сборка образа
+        run: docker build -t ves-forecast .
+      - name: Запуск и проверка ответа
+        run: |
+          docker run -d --name app -p 8000:8000 -e WEATHER_OFFLINE=1 ves-forecast
+          sleep 20
+          curl -sf http://localhost:8000/api/status
+          curl -sf -X POST "http://localhost:8000/api/run?issue_date=2026-02-05" | head -c 300
