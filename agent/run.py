@@ -16,7 +16,7 @@ import pandas as pd
 
 from common.config import TEST_ISSUE_DATES, TZ
 from agent import tools
-from agent.analyst import daily_note
+from agent.analyst import make_note
 
 log = logging.getLogger("agent")
 
@@ -29,6 +29,7 @@ class RunResult:
     forecast_path: str = ""
     analysis: dict = field(default_factory=dict)
     note: str = ""
+    note_source: str = ""   # "model:<имя модели>" или "template"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -54,9 +55,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None) -> RunResult:
+def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None, *,
+            note_mode: str = "auto") -> RunResult:
     """Один день: погода → признаки → модель → CSV → анализ → сводка → журнал; пишет output/runs/<date>.json.
-    Если вчерашний прогноз не передан, берётся из output/forecasts, когда файл есть."""
+    Если вчерашний прогноз не передан, берётся из output/forecasts, когда файл есть.
+    note_mode: "auto" — сводку пишет модель при ключе, иначе шаблон; "template" — всегда шаблон."""
+    if note_mode not in ("auto", "template"):
+        raise ValueError(f"Неизвестный режим сводки «{note_mode}»: допустимы auto и template.")
     issue_date = validate_issue_date(issue_date)
     result = RunResult(issue_date=issue_date)
     log.info("=== День выпуска %s ===", issue_date)
@@ -103,8 +108,10 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None) -> R
               f"{analysis['low_confidence_count']} ч, экстремального ветра {len(analysis['extreme_wind_hours'])} ч")
 
     step = _Step(result, "note")
-    result.note = daily_note(analysis)
-    step.done(result.note.splitlines()[0][:120] if result.note else "пусто")
+    result.note, result.note_source = make_note(analysis, note_mode)
+    analysis["note_source"] = result.note_source
+    step.done(f"сводка: {tools.note_source_ru(result.note_source)}; "
+              + (result.note.splitlines()[0][:120] if result.note else "пусто"))
 
     step = _Step(result, "write_journal")
     tools.write_journal(issue_date, analysis, result.note)
@@ -119,7 +126,8 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None) -> R
 
 
 def run_period(start: str, end: str) -> list[RunResult]:
-    """Последовательно по датам; вчерашний прогноз передаётся в следующий день для сравнения."""
+    """Последовательно по датам; вчерашний прогноз передаётся в следующий день для сравнения.
+    Сводки по периоду всегда шаблонные: быстро и детерминированно, без обращений к модели."""
     start, end = validate_issue_date(start), validate_issue_date(end)
     if start > end:
         raise ValueError(f"Начало периода {start} позже конца {end}")
@@ -127,7 +135,7 @@ def run_period(start: str, end: str) -> list[RunResult]:
     previous = None
     for day in pd.date_range(start, end, freq="D"):
         issue_date = day.strftime("%Y-%m-%d")
-        result = run_day(issue_date, previous)
+        result = run_day(issue_date, previous, note_mode="template")
         results.append(result)
         previous = tools.read_forecast_csv(result.forecast_path)
     log.info("Период %s … %s: %d дней, файлы в %s, журнал %s",

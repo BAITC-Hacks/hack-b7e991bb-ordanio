@@ -366,7 +366,46 @@ def _weather_source(weather: pd.DataFrame) -> str:
 
 
 def _source_ru(source: str) -> str:
-    return {"network": "сеть Open-Meteo", "cache": "кэш data/weather_cache"}.get(source, source)
+    return {"network": "Open-Meteo, сеть", "cache": "архив прогнозов из кэша"}.get(source, source)
+
+
+_MONTHS_GEN = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября",
+               "октября", "ноября", "декабря")
+
+
+def _ru_day(value) -> str:
+    """«2026-02-13» или «2026-02-13T20:00:00+05:00» → «13 февраля»."""
+    text = str(value)
+    try:
+        return f"{int(text[8:10])} {_MONTHS_GEN[int(text[5:7]) - 1]}"
+    except (ValueError, IndexError):
+        return text
+
+
+def _ru_time(value, sep: str = " ") -> str:
+    """«2026-02-13T20:00:00+05:00» → «13 февраля 20:00» (sep=" в " даёт «13 февраля в 20:00»).
+    Время местное, как записано в самой строке; смещение не показывается."""
+    text = str(value)
+    if len(text) >= 16 and text[10] in "T ":
+        return f"{_ru_day(text)}{sep}{text[11:16]}"
+    return _ru_day(text)
+
+
+def _hours_word(n: int) -> str:
+    """Склонение: 1 час, 2 часа, 5 часов, 21 час, 24 часа."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return "час"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "часа"
+    return "часов"
+
+
+def note_source_ru(note_source: str | None) -> str:
+    """«model:gpt-5.5» → «модель gpt-5.5», «template» → «шаблон»."""
+    if note_source and str(note_source).startswith("model:"):
+        return "модель " + str(note_source)[len("model:"):]
+    return "шаблон"
 
 
 def _previous_p50(previous: pd.DataFrame | None, t: pd.Timestamp, turbine: int) -> float | None:
@@ -468,13 +507,14 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
     days = analysis["days"]
     lines = [f"## Выпуск {issue_date}", ""]
     src = analysis.get("weather_source", "unknown")
-    lines.append(f"Погода: {_source_ru(src)}; прогноз на {' и '.join(days)} ({analysis['hours']} часов). "
-                 f"Ветер на 100 м от {analysis['weather']['ws100_min']} до {analysis['weather']['ws100_max']} м/с, "
-                 f"в среднем {analysis['weather']['ws100_mean']}.")
+    lines.append(f"Погода: {_source_ru(src)}; прогноз на {' и '.join(_ru_day(d) for d in days)} "
+                 f"({analysis['hours']} {_hours_word(analysis['hours'])}). "
+                 f"Ветер на 100 м от {analysis['weather']['ws100_min']:.1f} до {analysis['weather']['ws100_max']:.1f} м/с, "
+                 f"в среднем {analysis['weather']['ws100_mean']:.1f} м/с.")
     lines.append("")
     lines.append("Итоги (сумма p50, единицы нормализованной мощности × час):")
     lines.append("")
-    lines.append("| Турбина | " + " | ".join(days) + " | Всего 48 ч | Коридор p10–p90 |")
+    lines.append("| Турбина | " + " | ".join(_ru_day(d) for d in days) + " | Всего 48 ч | Коридор p10–p90 |")
     lines.append("|---|" + "---|" * (len(days) + 2))
     for t in analysis["turbines"]:
         tt = totals[str(t)]
@@ -490,8 +530,9 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
         lines.append("Изменения к вчерашнему прогнозу: общих часов нет.")
     else:
         lines.append(
-            f"Изменения к вчерашнему прогнозу: {delta['hours']} общих часов "
-            f"({delta['overlap_start'][:16]} … {delta['overlap_end'][:16]}); сумма p50 обеих турбин была "
+            f"Изменения к вчерашнему прогнозу: {delta['hours']} {'общий' if _hours_word(delta['hours']) == 'час' else 'общих'} "
+            f"{_hours_word(delta['hours'])} "
+            f"({_ru_time(delta['overlap_start'])} … {_ru_time(delta['overlap_end'])}); сумма p50 обеих турбин была "
             f"{delta['sum_p50_prev']:.2f}, стала {delta['sum_p50_new']:.2f} ({delta['delta_energy']:+.2f}); "
             f"часов с изменением больше {DELTA_P50_LOW}: {delta['hours_changed_over_threshold']}."
         )
@@ -503,23 +544,23 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
         lines.append(f"Часы низкой уверенности ({len(low)}), {threshold_text(analysis)}:")
         lines.append("")
         for h in low[:24]:
-            lines.append(f"- {h['target_time'][:16]}, турбина {h['turbine']}: p50 {h['p50']:.2f}, {h['reason']}")
+            lines.append(f"- {_ru_time(h['target_time'])}, турбина {h['turbine']}: p50 {h['p50']:.2f}, {h['reason']}")
         if len(low) > 24:
             lines.append(f"- … и ещё {len(low) - 24}")
     lines.append("")
     ext = analysis["extreme_wind_hours"]
     if ext:
         lines.append(f"Экстремальный ветер (выше {CUTOUT_WS100:.0f} м/с, турбины остановлены, выработка 0): "
-                     + ", ".join(f"{h['target_time'][:16]} ({h['ws100']} м/с)" for h in ext))
+                     + ", ".join(f"{_ru_time(h['target_time'])} ({h['ws100']} м/с)" for h in ext))
         lines.append("")
     err = analysis["error_yesterday"]
     if err is None:
         lines.append("Ошибка за вчера: факта за этот день в данных нет (или нет вчерашнего прогноза).")
     else:
-        lines.append(f"Ошибка вчерашнего прогноза на {err['day']} по факту: MAE {err['mae']:.3f}, RMSE {err['rmse']:.3f}, "
+        lines.append(f"Ошибка вчерашнего прогноза на {_ru_day(err['day'])} по факту: MAE {err['mae']:.3f}, RMSE {err['rmse']:.3f}, "
                      f"смещение {err['bias']:+.3f}, факт внутри коридора p10–p90 в {err['coverage_p10_p90'] * 100:.0f}% часов.")
     lines.append("")
-    lines.append("Сводка дня:")
+    lines.append(f"Сводка дня (сводка: {note_source_ru(analysis.get('note_source'))}):")
     lines.append("")
     lines.append(note.strip())
     lines.append("")
