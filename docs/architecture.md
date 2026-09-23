@@ -102,7 +102,7 @@ run_model(features_by_turbine) -> pd.DataFrame       # объединённый 
 save_forecast(issue_date, forecast, weather) -> str  # путь к output/forecasts/forecast_<issue_date>.csv
 analyze(issue_date, forecast, previous_forecast, actuals) -> dict
     # totals по турбинам и суткам; delta_vs_previous по пересекающимся часам; low_confidence_hours
-    # (|p50 − p50_prev| > 0.15 или ширина коридора > 0.5); extreme_wind_hours (ws100 > 25 м/с);
+    # (|p50 − p50_prev| > 0.15 или ширина коридора p90−p10 > 0.7, это верхняя четверть часов при медиане 0.50); extreme_wind_hours (ws100 > 25 м/с);
     # error_yesterday (MAE по факту, если факт есть, иначе None)
 write_journal(issue_date, analysis, note) -> None    # добавляет раздел в output/journal.md
 

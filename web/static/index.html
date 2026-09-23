@@ -592,51 +592,90 @@ async function loadValidation() {
   const box = $("validation-body");
   try {
     const data = await api("/api/validation");
-    box.innerHTML = renderMetrics(data.metrics) + renderValidationExtras(data);
+    box.innerHTML = renderValidation(data);
   } catch (e) {
     box.innerHTML = `<div class="info">${escapeHtml(e.message)}</div>`;
   }
 }
 
-function isPlainObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
-
-function formatValue(v) {
-  if (typeof v === "number") return Number.isInteger(v) ? String(v) : num(v);
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "object") return escapeHtml(JSON.stringify(v));
-  return escapeHtml(v);
+// Безопасное чтение вложенного поля: get(obj, "a", "b") → obj.a.b или undefined.
+function get(obj, ...keys) {
+  let cur = obj;
+  for (const k of keys) {
+    if (cur === null || typeof cur !== "object" || !(k in cur)) return undefined;
+    cur = cur[k];
+  }
+  return cur;
 }
 
-// Структура metrics.json заранее не известна: словарь словарей чисел — таблица, иначе список «ключ: значение».
-function renderMetrics(metrics) {
-  if (!isPlainObject(metrics) || !Object.keys(metrics).length) return '<p class="muted">Метрик нет.</p>';
-  const rowKeys = Object.keys(metrics);
-  const isMatrix = rowKeys.every((k) => isPlainObject(metrics[k]) &&
-    Object.values(metrics[k]).every((v) => v === null || typeof v === "number"));
-  if (isMatrix) {
-    const cols = [];
-    for (const k of rowKeys) for (const c of Object.keys(metrics[k])) if (!cols.includes(c)) cols.push(c);
-    return `<div class="table-wrap"><table><thead><tr><th></th>${cols.map((c) => `<th class="num">${escapeHtml(c)}</th>`).join("")}</tr></thead>
-      <tbody>${rowKeys.map((k) => `<tr><th>${escapeHtml(k)}</th>${cols.map((c) => `<td class="num">${formatValue(metrics[k][c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
-  }
-  const flat = [];
-  (function walk(obj, prefix) {
-    for (const [k, v] of Object.entries(obj)) {
-      const key = prefix ? prefix + "." + k : k;
-      if (isPlainObject(v)) walk(v, key);
-      else flat.push([key, v]);
-    }
-  })(metrics, "");
-  return `<div class="table-wrap"><table><thead><tr><th>Показатель</th><th class="num">Значение</th></tr></thead><tbody>
-    ${flat.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${formatValue(v)}</td></tr>`).join("")}</tbody></table></div>`;
+const MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+
+// «2026-01» → «январь 2026»
+function formatMonth(value) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(value || ""));
+  return m ? `${MONTHS_RU[Number(m[2]) - 1] || m[2]} ${m[1]}` : (value ? escapeHtml(value) : "—");
 }
 
-function renderValidationExtras(data) {
-  let html = '<p class="muted small">Меньше — лучше для ошибок (MAE, RMSE, pinball). Модель полезна, если её ошибка ниже, чем у persistence и curve.</p>';
-  if (Array.isArray(data.rows) && data.rows.length) {
-    html += `<p class="muted small">Часов в проверке: ${data.rows.length} (строки validation.csv, по обеим турбинам).</p>`;
+function percent(value) {
+  const n = Number(value);
+  return value === null || value === undefined || !Number.isFinite(n) ? "—" : (n * 100).toFixed(1) + "%";
+}
+
+function countOrDash(value) {
+  return value === null || value === undefined ? "—" : escapeHtml(value);
+}
+
+// Одна таблица метрик: строки — модель и две точки отсчёта, колонки — MAE, RMSE, покрытие, ширина.
+const VALIDATION_ROWS = [
+  ["model", "Модель (бустинг)"],
+  ["persistence", "Завтра как сегодня"],
+  ["power_curve", "Кривая мощности по ветру"],
+];
+
+function metricsTable(title, block) {
+  const body = VALIDATION_ROWS.map(([key, label]) => {
+    const m = get(block, key) || {};
+    return `<tr><td>${label}</td><td class="num">${num(m.mae)}</td><td class="num">${num(m.rmse)}</td>
+      <td class="num">${percent(m.coverage_p10_p90)}</td><td class="num">${num(m.mean_width_p10_p90)}</td></tr>`;
+  }).join("");
+  const rows = get(block, "rows");
+  return `<h3>${title}${rows !== undefined ? ` <span class="muted small">(строк: ${escapeHtml(rows)})</span>` : ""}</h3>
+    <div class="table-wrap" style="margin-top:4px"><table>
+      <thead><tr><th>Способ прогноза</th><th class="num">MAE</th><th class="num">RMSE</th>
+        <th class="num">Факт в коридоре p10–p90</th><th class="num">Средняя ширина коридора</th></tr></thead>
+      <tbody>${body}</tbody></table></div>`;
+}
+
+// Итоговый сдвиг времени из time_alignment: applied_shift_hours по периодам, иначе best_shift за весь период.
+function formatTimeShift(alignment) {
+  const applied = get(alignment, "applied_shift_hours");
+  const periods = get(alignment, "periods") || {};
+  if (applied !== null && typeof applied === "object" && Object.keys(applied).length) {
+    const entries = Object.entries(applied);
+    const values = [...new Set(entries.map(([, v]) => String(v)))];
+    const details = entries.map(([k, v]) => `${escapeHtml(get(periods, k, "name") || k)}: ${escapeHtml(v)} ч`).join(", ");
+    return values.length === 1 ? `${escapeHtml(values[0])} ч (${details})` : details;
   }
-  if (data.report) {
+  if (typeof applied === "number") return `${applied} ч`;
+  const best = get(periods, "all", "best_shift");
+  return best !== undefined ? `${escapeHtml(best)} ч` : "—";
+}
+
+function renderValidation(data) {
+  const metrics = (data && data.metrics) || {};
+  const v = metrics.validation || {};
+  const trainSeconds = Number(get(metrics, "model", "train_seconds"));
+
+  let html = `<p style="margin:12px 0 0">Месяц проверки: <b>${formatMonth(metrics.validation_month)}</b>.
+    Дат выпуска прогноза: <b>${countOrDash(v.n_issue_dates)}</b>, строк прогноза с известным фактом: <b>${countOrDash(v.rows_with_fact)}</b>.</p>`;
+  html += metricsTable("Все 48 часов", v.overall);
+  html += metricsTable("Первые сутки", get(v, "by_lead_day", "day1"));
+  html += metricsTable("Вторые сутки", get(v, "by_lead_day", "day2"));
+  html += `<p class="muted small">MAE и RMSE — средняя ошибка в долях номинала, меньше — лучше. «Факт в коридоре» по замыслу около 80%.
+    У «завтра как сегодня» коридора нет, поэтому там «—».</p>`;
+  html += `<p>Сдвиг времени по самопроверке: ${formatTimeShift(metrics.time_alignment)}.
+    Время обучения модели: ${Number.isFinite(trainSeconds) ? trainSeconds.toFixed(1) + " с" : "—"}.</p>`;
+  if (data && data.report) {
     html += `<details><summary>Отчёт о проверке</summary><pre>${escapeHtml(data.report)}</pre></details>`;
   }
   return html;

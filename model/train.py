@@ -286,11 +286,11 @@ def write_report(path: Path, m: dict) -> None:
              f"неполных часов (меньше 4 из 6 десятиминутных замеров), {d['removed_no_power_value']} часов без "
              f"значения мощности и {d['removed_downtime_hours']} часов вероятного простоя (замеренный ветер "
              "6 м/с и больше при мощности не выше 0,01 номинала три часа подряд и дольше). "
-             f"При склейке с погодой потеряно {d['rows_without_weather']} часов факта, для которых в архиве "
-             f"прогнозов нет строки. В месяце проверки {VALIDATION_MONTH} осталось {d['validation_month_rows']} "
-             "часов факта по двум турбинам, они в обучение не вошли.\n")
-    L.append(f"Архив прогнозов погоды: {m['weather']['hours']} часов, с {m['weather']['first']} по "
-             f"{m['weather']['last']}, пропусков нет: {m['weather']['nan_values'] == 0}.\n")
+             f"Часов факта, для которых в архиве прогнозов погоды нет строки: {d['rows_without_weather']}; "
+             f"они в обучение не вошли. Часов факта в месяце проверки {VALIDATION_MONTH} по двум турбинам: "
+             f"{d['validation_month_rows']}; они тоже отложены и в обучение не вошли.\n")
+    L.append(f"Архив прогнозов погоды: часов {m['weather']['hours']}, с {m['weather']['first']} по "
+             f"{m['weather']['last']}, пустых значений {m['weather']['nan_values']}.\n")
 
     L.append("## Время и самопроверка сдвига\n")
     L.append("Open-Meteo отдаёт время всех дат с одним постоянным смещением UTC+5, в том числе для 2023 года, "
@@ -329,15 +329,16 @@ def write_report(path: Path, m: dict) -> None:
     pb, pa = per["before"]["peak_hours_estimate"], per["after"]["peak_hours_estimate"]
     if pb is not None and pa is not None:
         diff = pb - pa
-        L.append(f"Вершины двух периодов отличаются на {diff:+.2f} ч. Замер SCADA это среднее за час, а прогноз "
-                 "погоды относится к моменту начала часа, поэтому вершина около ±0,5 ч ожидаема сама по себе.")
+        text = (f"Вершины двух периодов отличаются на {diff:+.2f} ч. Замер SCADA это среднее за час. Прогноз "
+                "погоды Open-Meteo дан на момент начала часа. Поэтому вершина около ±0,5 ч ожидаема сама по себе.")
         if 0.5 <= abs(diff) <= 1.5:
-            L.append(" Разница между периодами близка к одному часу. Это согласуется с тем, что часы SCADA после "
-                     f"{CLOCK_CHANGE} не переводились и остались на UTC+6. Целый сдвиг при этом в обоих периодах "
-                     "выбирается по наибольшей корреляции; дробная часть часа сдвигом по часам не исправляется.\n")
+            text += (" Разница между периодами близка к одному часу. Это согласуется с тем, что часы SCADA после "
+                     f"{CLOCK_CHANGE} не переводились и остались на UTC+6. Целый сдвиг в каждом периоде выбран "
+                     "по наибольшей корреляции. Дробную часть часа сдвиг на целые часы исправить не может.\n")
         else:
-            L.append(" Разница между периодами меньше половины часа или больше полутора часов, признаков "
+            text += (" Разница между периодами меньше половины часа или больше полутора часов. Признаков "
                      "непереведённых часов SCADA самопроверка не показала.\n")
+        L.append(text)
     ap = al["applied_shift_hours"]
     if any(ap.values()):
         L.append(f"Применённые сдвиги: {PERIOD_NAMES['before']} {ap['before']:+d} ч, {PERIOD_NAMES['after']} "
@@ -373,12 +374,13 @@ def write_report(path: Path, m: dict) -> None:
 
     L.append(f"## Проверка на {VALIDATION_MONTH}\n")
     L.append(f"Дат выпуска {v['n_issue_dates']}, строк прогноза {v['forecast_rows']} (48 часов × 2 турбины на каждую "
-             f"дату). С фактом сопоставлено {v['rows_with_fact']} строк. Без факта {v['rows_without_fact']} строк: "
-             f"{v['rows_without_fact_outside_month']} за пределами месяца проверки (день 2 последней даты выпуска), "
-             f"{v['rows_without_fact_inside_month']} внутри месяца (час убран фильтром или замеров нет). "
-             f"Час турбины встречается в проверке дважды (как день 1 и как день 2) {v['hours_seen_twice']} раз, "
-             f"один раз {v['hours_seen_once']} раз: первый день месяца покрыт только как день 1, потому что "
-             "дата выпуска накануне в кэш не входит. Источник погоды по строкам: "
+             f"дату). Строк, сопоставленных с фактом: {v['rows_with_fact']}. Строк без факта: "
+             f"{v['rows_without_fact']}. Из них за пределами месяца проверки (день 2 последней даты выпуска): "
+             f"{v['rows_without_fact_outside_month']}; внутри месяца (час убран фильтром или замеров нет): "
+             f"{v['rows_without_fact_inside_month']}. Часов турбины, которые встречаются в проверке дважды "
+             f"(как день 1 и как день 2): {v['hours_seen_twice']}; один раз: {v['hours_seen_once']}. Первый день "
+             "месяца покрыт только как день 1, потому что прогноза с датой выпуска накануне в кэше нет. "
+             "Источник погоды по строкам: "
              + ", ".join(f"{k} {n}" for k, n in v["sources"].items()) + ".\n")
     L.append("Все ошибки в долях номинальной мощности: 0.1 означает 10% номинала. Покрытие это доля часов, "
              "где факт попал в коридор от p10 до p90 включительно; по замыслу около 0.8. Ширина это средняя "
@@ -406,6 +408,20 @@ def write_report(path: Path, m: dict) -> None:
         _ratio_sentence(o["model"]["mae_on_persistence_rows"], o["persistence"]["mae"], "persistence"),
         _ratio_sentence(o["model"]["mae"], o["power_curve"]["mae"], "кривой мощности"),
         f"Покрытие коридора модели {_pct(o['model']['coverage_p10_p90'])} при замысле около 80%.") if x) + "\n")
+    better = [n for n, g in groups if g["model"]["mae"] is not None and g["power_curve"]["mae"] is not None
+              and g["model"]["mae"] < g["power_curve"]["mae"]]
+    not_better = [n for n, g in groups if n not in better]
+    L.append("Сравнение с кривой мощности по MAE. Модель точнее кривой в срезах: "
+             f"{', '.join(better) if better else 'ни в одном'}. Модель не точнее кривой в срезах: "
+             f"{', '.join(not_better) if not_better else 'ни в одном'}.\n")
+    arch = v.get("archive_forecast_check")
+    if arch and arch.get("rows"):
+        L.append("Отдельная сверка, чтобы понять, откуда ошибка. Те же модели на тех же часах месяца проверки, "
+                 "только признаки взяты из архива прогнозов (как при обучении, самые свежие запуски погодной "
+                 f"модели). Строк {arch['rows']}, MAE модели {_f(arch['model_mae'])}, MAE кривой мощности "
+                 f"{_f(arch['curve_mae'])}, покрытие коридора модели {_f(arch['model_coverage_p10_p90'], 3)}. "
+                 "Разница с таблицей выше показывает, сколько добавляет то, что прогноз погоды сделан за 1–2 "
+                 "суток.\n")
 
     L.append("## Оговорки\n")
     L.append("- Факта за февраль 2026 нет. Проверка сделана на одном месяце, январе 2026. Это зима; как модель "
@@ -516,6 +532,24 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None) -> d
 
     # 6. Проверка на месяце проверки так, как работает агент.
     rows, val_summary = validate(models, curve, facts, applied)
+    # Сверка: те же часы месяца проверки, признаки из архива прогнозов (как на обучении).
+    val_df = joined[in_val]
+    if len(val_df):
+        parts = []
+        for turbine, g in val_df.groupby("turbine"):
+            f = g.set_index("time")[FEATURES]
+            p, c = predict(f, int(turbine), models), curve.predict(f, int(turbine))
+            parts.append(pd.DataFrame({"actual": g["power"].to_numpy(), "p10": p["p10"].to_numpy(),
+                                       "p50": p["p50"].to_numpy(), "p90": p["p90"].to_numpy(),
+                                       "curve": c["p50"].to_numpy()}))
+        a = pd.concat(parts, ignore_index=True)
+        cov, _ = _band(a["actual"], a["p10"], a["p90"])
+        val_summary["archive_forecast_check"] = {
+            "rows": int(len(a)), "model_mae": _mae(a["p50"] - a["actual"]),
+            "curve_mae": _mae(a["curve"] - a["actual"]), "model_coverage_p10_p90": cov}
+        log.info("Сверка на архиве прогнозов за %s: модель MAE %s, кривая MAE %s, покрытие %s",
+                 VALIDATION_MONTH, _f(a["p50"].sub(a["actual"]).abs().mean()),
+                 _f(a["curve"].sub(a["actual"]).abs().mean()), _f(cov, 3))
     val_summary["overall"] = group_metrics(rows)
     val_summary["by_lead_day"] = {f"day{int(k)}": group_metrics(g) for k, g in rows.groupby("lead_day")}
     val_summary["by_turbine"] = {str(int(k)): group_metrics(g) for k, g in rows.groupby("turbine")}

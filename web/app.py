@@ -146,6 +146,10 @@ def train_in_background(reason: str):
 
     def worker():
         training_state.update(running=True, error=None, started=time.time(), finished=None)
+        if artifacts_ready():  # артефакты успел положить кто-то другой (например, python -m model.train)
+            training_state.update(running=False, finished=time.time())
+            log.info("Артефакты модели появились, обучение не нужно.")
+            return
         log.info("Артефактов модели нет (%s). Запускаю обучение в фоне, погода берётся из кэша.", reason)
         try:
             train_mod = importlib.import_module("model.train")
@@ -195,8 +199,6 @@ def index():
 @app.get("/api/status")
 def status():
     ready = artifacts_ready()
-    if not ready and not training_state["running"] and not training_state["error"]:
-        train_in_background("по запросу статуса")  # модуль мог появиться после старта
     return {
         "model_ready": ready,
         "weather_cache_ok": weather_cache_ok(),
