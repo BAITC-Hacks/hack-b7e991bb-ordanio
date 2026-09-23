@@ -14,7 +14,10 @@ from common.config import ARTIFACTS, OUTPUT, TEST_ISSUE_DATES
 log = logging.getLogger("agent")
 load_dotenv()
 
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.5"        # чат (ask), переопределяется OPENAI_MODEL
+DEFAULT_NOTE_MODEL = "gpt-5.4"   # сводка дня (make_note), переопределяется OPENAI_MODEL_NOTE
+NOTE_TIMEOUT = 45.0              # с, сводка дня
+CHAT_TIMEOUT = 30.0              # с, чат
 NO_KEY_TEXT = ("Чат с агентом отключён: в окружении нет OPENAI_API_KEY. Прогнозы, анализ и журнал "
                "при этом работают полностью; ключ нужен только для ответов на вопросы и сводки дня.")
 
@@ -27,9 +30,14 @@ def _model_name() -> str:
     return os.environ.get("OPENAI_MODEL", "").strip() or DEFAULT_MODEL
 
 
-def _client(timeout: float = 30.0):
+def _note_model_name() -> str:
+    """Модель сводки дня: OPENAI_MODEL_NOTE, иначе DEFAULT_NOTE_MODEL (чат идёт на _model_name())."""
+    return os.environ.get("OPENAI_MODEL_NOTE", "").strip() or DEFAULT_NOTE_MODEL
+
+
+def _client(timeout: float = CHAT_TIMEOUT):
     """Клиент OpenAI с таймаутом и без повторов: недоступный API не должен держать цикл агента.
-    30 с и для чата, и для сводки дня; при превышении сводка собирается по шаблону."""
+    Чат 30 с (CHAT_TIMEOUT), сводка дня 45 с (NOTE_TIMEOUT); при превышении сводка собирается по шаблону."""
     from openai import OpenAI
     return OpenAI(timeout=timeout, max_retries=0)
 
@@ -51,7 +59,8 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
     if mode != "auto":
         raise ValueError(f"Неизвестный режим сводки «{mode}»: допустимы auto и template.")
     try:
-        client = _client()
+        client = _client(NOTE_TIMEOUT)
+        model = _note_model_name()
         prompt = (
             "Ты аналитик ветростанции из двух турбин. Ниже словарь с результатами дневного прогноза выработки "
             "на 48 часов. Напиши сводку дня по-русски для диспетчера без образования в машинном обучении.\n"
@@ -76,14 +85,13 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
             f"Данные:\n{json.dumps(analysis, ensure_ascii=False)}"
         )
         response = client.chat.completions.create(
-            model=_model_name(),
+            model=model,
             messages=[{"role": "user", "content": prompt}],
         )
         text = (response.choices[0].message.content or "").strip()
         if not text:
             return template, "template"
-        return (text + "\n\n(Сводку написала модель " + _model_name() + " по числам анализа.)",
-                "model:" + _model_name())
+        return (text + "\n\n(Сводку написала модель " + model + " по числам анализа.)", "model:" + model)
     except Exception as exc:
         log.warning("LLM недоступен, сводка по шаблону: %s", exc)
         return template + f"\n\n(LLM недоступен: {exc}; сводка собрана по шаблону.)", "template"
@@ -397,7 +405,7 @@ def ask(question: str, history: list | None = None) -> str:
             messages.append({"role": item["role"], "content": str(item["content"])})
     messages.append({"role": "user", "content": str(question).strip()})
     try:
-        client = _client()
+        client = _client(CHAT_TIMEOUT)
         for _ in range(MAX_TOOL_ROUNDS):
             response = client.chat.completions.create(
                 model=_model_name(), messages=messages, tools=TOOLS_SPEC,
