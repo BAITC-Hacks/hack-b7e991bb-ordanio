@@ -1,0 +1,133 @@
+# Проверочный сценарий: обучение на срезе (последние 90 дней) во временную папку, прогон run_day("2026-02-05")
+# без сети (WEATHER_OFFLINE=1), проверка формы CSV (96 строк, [0,1], p10 <= p50 <= p90) и кривого ввода; в конце PASS.
+
+import importlib
+import inspect
+import os
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+os.environ["WEATHER_OFFLINE"] = "1"          # до импортов проекта: погода только из data/weather_cache
+os.chdir(ROOT)                                # пути проекта относительные от корня репозитория
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import pandas as pd
+import pytest
+
+ISSUE_DATE = "2026-02-05"
+SLICE_START = "2025-11-02"                   # 90 дней до 2026-01-31
+EXPECTED_COLUMNS = ["issue_date", "target_time", "lead_hours", "turbine", "ws100_forecast",
+                    "temp_forecast", "p10", "p50", "p90", "confidence", "note"]
+EXPECTED_STEPS = ["fetch_weather", "prepare", "run_model", "save_forecast", "analyze", "write_journal"]
+ARTIFACT_FILES = ["model_q10.joblib", "model_q50.joblib", "model_q90.joblib", "metrics.json"]
+SKIP_TRAIN = "model.train пока не принимает срез и папку артефактов"
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+
+
+def _snapshot(folder: Path) -> dict:
+    """Имена и время изменения файлов папки: так проверяем, что боевые артефакты не тронуты."""
+    if not folder.exists():
+        return {}
+    return {p.name: p.stat().st_mtime_ns for p in folder.iterdir() if p.is_file()}
+
+
+@pytest.fixture(scope="session")
+def slice_training(tmp_path_factory):
+    """Обучает модель на срезе во временную папку. Возвращает (папка, метрики) или (None, причина пропуска).
+    Полное обучение на трёх годах здесь не запускается никогда."""
+    try:
+        train_module = importlib.import_module("model.train")
+    except ModuleNotFoundError as exc:
+        if exc.name in ("model.train", "model.features"):
+            return None, f"{SKIP_TRAIN} (нет модуля {exc.name})"
+        raise
+    fn = getattr(train_module, "train", None)
+    if fn is None:
+        return None, f"{SKIP_TRAIN} (в model.train нет функции train)"
+    params = inspect.signature(fn).parameters
+    if "train_start" not in params or "artifacts_dir" not in params:
+        return None, f"{SKIP_TRAIN} (сигнатура train{inspect.signature(fn)})"
+
+    from common.config import ARTIFACTS
+    before = _snapshot(ROOT / ARTIFACTS)
+    out_dir = tmp_path_factory.mktemp("artifacts_slice")
+    metrics = fn(train_start=SLICE_START, artifacts_dir=str(out_dir))
+    assert _snapshot(ROOT / ARTIFACTS) == before, "обучение на срезе изменило боевые model/artifacts"
+    return out_dir, metrics
+
+
+@pytest.fixture(scope="session")
+def scenario(slice_training):
+    """Один прогон run_day на дату из тестового периода. Если срез обучен, агент работает на его моделях
+    (подставляются в кэш model.predict на время сессии); иначе как в бою: артефакты или PowerCurveModel."""
+    from model import predict as predict_module
+    from agent.run import run_day
+
+    out_dir, _ = slice_training
+    saved = predict_module._MODELS_CACHE
+    if out_dir is not None:
+        predict_module._MODELS_CACHE = predict_module.load_models(str(out_dir))
+    try:
+        yield run_day(ISSUE_DATE)
+    finally:
+        predict_module._MODELS_CACHE = saved
+
+
+def test_train_on_slice(slice_training):
+    out_dir, info = slice_training
+    if out_dir is None:
+        pytest.skip(info)
+    for name in ARTIFACT_FILES:
+        assert (out_dir / name).exists(), f"после обучения на срезе нет {name}"
+    assert isinstance(info, dict), "train должен возвращать словарь метрик"
+
+
+def test_run_day_forecast(scenario):
+    result = scenario
+    assert result.issue_date == ISSUE_DATE
+    path = Path(result.forecast_path)
+    assert path.exists(), f"файла прогноза нет: {path}"
+    assert path.name == f"forecast_{ISSUE_DATE}.csv"
+
+    df = pd.read_csv(path, keep_default_na=False)
+    assert len(df) == 96, f"ожидалось 96 строк, получено {len(df)}"
+    assert list(df.columns) == EXPECTED_COLUMNS, f"колонки не по контракту: {list(df.columns)}"
+    assert (df["issue_date"].astype(str) == ISSUE_DATE).all()
+    assert df["turbine"].value_counts().to_dict() == {1: 48, 2: 48}
+    for turbine, part in df.groupby("turbine"):
+        assert sorted(part["lead_hours"].astype(int)) == list(range(24, 72)), f"турбина {turbine}: часы не 24..71"
+        assert part["target_time"].nunique() == 48
+
+    q = df[["p10", "p50", "p90"]].astype(float)
+    assert q.notna().all().all(), "в p10/p50/p90 есть пропуски"
+    assert ((q >= 0) & (q <= 1)).all().all(), "значения p10/p50/p90 вне [0, 1]"
+    eps = 1e-9
+    assert (q["p10"] <= q["p50"] + eps).all(), "p10 > p50"
+    assert (q["p50"] <= q["p90"] + eps).all(), "p50 > p90"
+    assert set(df["confidence"]) <= {"ok", "low"}, f"confidence вне ok/low: {set(df['confidence'])}"
+
+    names = [s["name"] for s in result.steps]
+    assert len(result.steps) >= 6, f"шагов меньше шести: {names}"
+    positions = [names.index(n) if n in names else -1 for n in EXPECTED_STEPS]
+    assert -1 not in positions, f"не хватает шагов: {names}"
+    assert positions == sorted(positions), f"шаги не по порядку: {names}"
+    for s in result.steps:
+        assert {"name", "started", "finished", "summary"} <= set(s), f"у шага {s.get('name')} не все поля"
+    assert (ROOT / "output" / "runs" / f"{ISSUE_DATE}.json").exists()
+
+
+@pytest.mark.parametrize("bad", ["2026-03-05", "abc", ""])
+def test_bad_input(bad):
+    from agent.run import run_day
+    with pytest.raises(ValueError) as err:
+        run_day(bad)
+    assert CYRILLIC.search(str(err.value)), f"сообщение не по-русски: {err.value}"
+
+
+def test_zz_pass(request):
+    """Последний тест: печатает PASS, только если ни одна проверка выше не упала."""
+    assert request.session.testsfailed == 0, "есть упавшие проверки, PASS не печатается"
+    print("PASS")

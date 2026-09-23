@@ -1,0 +1,9 @@
+# Что не попадает в образ. data/raw, data/weather_cache и model/artifacts остаются: контейнер работает без сети.
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+output
+.env
+**/.DS_Store

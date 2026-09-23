@@ -80,8 +80,12 @@ def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
    `report.md` (объём данных, что выброшено, сдвиг, метрики против точек отсчёта).
 
 ```python
-def load_models() -> dict            # {"q10": ..., "q50": ..., "q90": ...}; если артефактов нет — PowerCurveModel
-def predict(features: pd.DataFrame, turbine: int) -> pd.DataFrame
+def train(train_start: str | None = None, artifacts_dir: str | None = None) -> dict
+    """Полный цикл обучения, возвращает метрики. CLI зовёт с умолчаниями (TRAIN_START, ARTIFACTS).
+    Тест зовёт train(train_start="2025-11-02", artifacts_dir=<временная папка>), не трогая боевые артефакты."""
+def load_models(artifacts_dir: str | None = None) -> dict   # {"q10","q50","q90"}; кэшируется на процесс;
+                                                            # если артефактов нет — PowerCurveModel
+def predict(features: pd.DataFrame, turbine: int, models: dict | None = None) -> pd.DataFrame
     """Индекс time; колонки: turbine, p10, p50, p90 в [0,1], p10 <= p50 <= p90 (после сортировки)."""
 ```
 

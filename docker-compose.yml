@@ -1,0 +1,16 @@
+# Запуск одной командой: docker compose up --build, затем http://localhost:8000.
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # результаты прогонов, журнал и прогнозы остаются на хосте
+      - ./output:/app/output
+      # обученная модель сохраняется между запусками, обучение не повторяется
+      - ./model/artifacts:/app/model/artifacts
+      # новые ответы Open-Meteo дописываются в кэш репозитория
+      - ./data/weather_cache:/app/data/weather_cache

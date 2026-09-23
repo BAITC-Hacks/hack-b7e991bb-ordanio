@@ -1,0 +1,724 @@
+<!-- Страница проекта: прогноз выработки двух ветротурбин на 48 часов. Запуск агента, журнал шагов, графики, таблица, проверка модели на январе, вопросы агенту. Без внешних библиотек и интернета. -->
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прогноз выработки ВЭС</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1d2330;
+    --muted: #5d6675;
+    --line: #dde1e7;
+    --accent: #1f5fbf;
+    --accent-dark: #174a96;
+    --band: #1f5fbf;
+    --low: #d9480f;
+    --ok: #2b8a3e;
+    --warn: #b7791f;
+    --err: #c92a2a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 0 0 12px; }
+  h3 { font-size: 16px; margin: 16px 0 8px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-top: 16px;
+  }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .pill {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: #fafbfc; font-size: 13px;
+  }
+  .pill.ok { border-color: #b2dfbd; background: #ebf7ee; color: #1e6b31; }
+  .pill.warn { border-color: #f0d48a; background: #fdf6e3; color: #7a5410; }
+  .pill.err { border-color: #f1b0b0; background: #fdecec; color: #9b1c1c; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  label { font-weight: 600; }
+  input[type=date], textarea {
+    font: inherit; padding: 6px 8px; border: 1px solid #b9c0cb; border-radius: 6px; background: #fff;
+  }
+  button {
+    font: inherit; padding: 7px 16px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  button:hover:not(:disabled) { background: var(--accent-dark); }
+  button.secondary { background: #fff; color: var(--accent); }
+  button.secondary:hover:not(:disabled) { background: #eef3fb; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  a { color: var(--accent); }
+  .error {
+    color: var(--err); background: #fdecec; border: 1px solid #f1b0b0;
+    border-radius: 6px; padding: 8px 12px; margin-top: 12px; white-space: pre-wrap;
+  }
+  .info {
+    background: #eef3fb; border: 1px solid #c9d8f0; border-radius: 6px; padding: 8px 12px; margin-top: 12px;
+  }
+  .hidden { display: none !important; }
+  .spinner {
+    display: inline-block; width: 16px; height: 16px; vertical-align: -3px;
+    border: 2px solid #c9d8f0; border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress { height: 8px; background: #e7eaef; border-radius: 4px; overflow: hidden; margin-top: 8px; max-width: 480px; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  ol.steps { margin: 0; padding-left: 22px; }
+  ol.steps li { margin-bottom: 6px; }
+  .step-name { font-weight: 600; }
+  .step-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .note { background: #fafbfc; border-left: 3px solid var(--accent); padding: 10px 14px; margin: 12px 0 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+  .fact { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  .fact h4 { margin: 0 0 6px; font-size: 14px; }
+  .fact ul { margin: 0; padding-left: 18px; }
+  .chart { margin-top: 12px; }
+  .chart svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .swatch { display: inline-block; width: 14px; height: 10px; vertical-align: 0; margin-right: 5px; }
+  .table-wrap { overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5px 8px; border-bottom: 1px solid #edf0f3; text-align: left; white-space: nowrap; }
+  th { background: #f1f3f6; position: sticky; top: 0; font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  td.wrap { white-space: normal; min-width: 180px; }
+  tr.low td { background: #fff4ec; }
+  pre {
+    white-space: pre-wrap; word-break: break-word; background: #fafbfc; border: 1px solid var(--line);
+    border-radius: 6px; padding: 12px; font-size: 13px; max-height: 520px; overflow: auto; margin: 10px 0 0;
+  }
+  details summary { cursor: pointer; font-weight: 600; }
+  .chat-log { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 12px; border-radius: 6px; white-space: pre-wrap; max-width: 90%; }
+  .msg.user { background: #eef3fb; align-self: flex-end; }
+  .msg.assistant { background: #f3f4f6; align-self: flex-start; }
+  .msg .who { font-size: 12px; color: var(--muted); display: block; margin-bottom: 2px; }
+  textarea { width: 100%; min-height: 70px; resize: vertical; }
+</style>
+</head>
+<body>
+<main>
+
+  <header>
+    <h1>Прогноз выработки ВЭС на 48 часов</h1>
+    <div class="muted">Две ветротурбины. Прогноз показывает долю от номинальной мощности по часам: 0 — стоит, 1 — работает на полную.</div>
+    <div id="status" class="status"><span class="pill">Загружаю состояние…</span></div>
+  </header>
+
+  <!-- Запуск прогноза -->
+  <section id="run-section">
+    <h2>Сформировать прогноз</h2>
+    <div class="row">
+      <label for="issue-date">Дата выпуска прогноза</label>
+      <input type="date" id="issue-date" min="2026-01-31" max="2026-02-28" value="2026-02-05">
+      <button id="run-btn" type="button">Сформировать прогноз</button>
+      <button id="run-all-btn" type="button" class="secondary">Прогнать весь февраль</button>
+    </div>
+    <div class="muted small" style="margin-top:6px">Доступны даты с 31.01.2026 по 28.02.2026. Прогноз строится на двое суток, следующих за датой выпуска.</div>
+    <div id="run-wait" class="info hidden"><span class="spinner"></span> <span id="run-wait-text">Агент работает…</span>
+      <div id="progress" class="progress hidden"><div id="progress-bar"></div></div>
+    </div>
+    <div id="run-error" class="error hidden"></div>
+  </section>
+
+  <!-- Результат: шаги, сводка, числа, графики, таблица -->
+  <section id="result-section" class="hidden">
+    <h2 id="result-title">Прогноз</h2>
+    <div id="steps-block" class="hidden">
+      <h3>Что сделал агент</h3>
+      <ol id="steps" class="steps"></ol>
+    </div>
+    <div id="note" class="note hidden"></div>
+    <div id="facts" class="grid"></div>
+
+    <h3>График по турбинам</h3>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--band);opacity:.25"></span>коридор p10–p90: с вероятностью около 80% выработка будет внутри</span>
+      <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>p50: наиболее вероятное значение</span>
+      <span><span class="swatch" style="background:var(--low);width:8px;height:8px;border-radius:50%"></span>час с низкой уверенностью</span>
+    </div>
+    <div id="charts"></div>
+
+    <h3>Таблица прогноза</h3>
+    <div class="row">
+      <a id="csv-link" href="#">Скачать CSV</a>
+      <span id="rows-count" class="muted small"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Время (местное)</th><th>Турбина</th><th class="num">Ветер 100 м, м/с</th><th class="num">Температура, °C</th>
+            <th class="num">p10</th><th class="num">p50</th><th class="num">p90</th><th>Уверенность</th><th>Примечание</th>
+          </tr>
+        </thead>
+        <tbody id="forecast-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Проверка модели на январе -->
+  <section id="validation-section">
+    <h2>Проверка на январе</h2>
+    <p class="muted" style="margin:0">Модель проверена на январе 2026, который не участвовал в обучении. Рядом две точки отсчёта: «завтра как сегодня» (persistence) и кривая мощности по ветру (curve).</p>
+    <div id="validation-body"><p class="muted">Загружаю…</p></div>
+  </section>
+
+  <!-- Журнал агента -->
+  <section>
+    <details id="journal-details">
+      <summary>Журнал агента</summary>
+      <pre id="journal">Загружаю…</pre>
+    </details>
+  </section>
+
+  <!-- Вопросы агенту: блок скрыт, пока не известно, что чат включён -->
+  <section id="chat-section" style="display:none">
+    <h2>Спросить агента</h2>
+    <p class="muted small" style="margin-top:0">Например: «Сколько выдаст турбина 1 по прогнозу за 2026-02-05?» или «Почему часы низкой уверенности?»</p>
+    <div id="chat-log" class="chat-log"></div>
+    <textarea id="question" placeholder="Ваш вопрос о прогнозе"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="ask-btn" type="button">Спросить</button>
+      <span id="ask-wait" class="muted hidden"><span class="spinner"></span> Агент думает…</span>
+    </div>
+    <div id="ask-error" class="error hidden"></div>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+
+// ---------- константы и состояние ----------
+const PERIOD_START = "2026-01-31";
+const PERIOD_END = "2026-02-28";
+const STEP_NAMES = {
+  fetch_weather: "Прогноз погоды",
+  prepare: "Подготовка признаков",
+  run_model: "Расчёт модели",
+  save_forecast: "Сохранение файла",
+  analyze: "Анализ прогноза",
+  note: "Сводка дня",
+  write_journal: "Запись в журнал",
+};
+
+let lastStatus = null;       // последний ответ /api/status
+let statusTimer = null;      // таймер опроса во время обучения
+let busy = false;            // идёт запуск: кнопки заблокированы
+let wasTraining = false;     // чтобы после обучения перезагрузить метрики
+const chatHistory = [];      // история диалога для /api/ask
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- общий помощник для запросов ----------
+// Бросает Error с текстом detail (или текстом ответа), если ответ не 2xx.
+async function api(path, options = {}) {
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (e) {
+    throw new Error("Сервер не отвечает. Проверьте, что он запущен. (" + e.message + ")");
+  }
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+  if (!response.ok) {
+    let message = text || ("Ошибка " + response.status);
+    if (data && data.detail !== undefined) {
+      message = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    }
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+  return data !== null ? data : text;
+}
+
+// ---------- форматирование ----------
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function num(value, digits = 3) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : escapeHtml(value);
+}
+
+function signed(value, digits = 3) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return (n > 0 ? "+" : "") + n.toFixed(digits);
+}
+
+// «2026-02-06T14:00:00+05:00» → «06.02.2026 14:00» (время берём как в строке, без пересчёта в пояс браузера)
+function formatTime(iso, withYear = true) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(String(iso || ""));
+  if (!m) return escapeHtml(iso);
+  return withYear ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : `${m[3]}.${m[2]} ${m[4]}:${m[5]}`;
+}
+
+function formatDay(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : escapeHtml(iso);
+}
+
+function show(el, visible) { el.classList.toggle("hidden", !visible); }
+
+function showError(el, message) {
+  if (message) { el.textContent = message; show(el, true); }
+  else { el.textContent = ""; show(el, false); }
+}
+
+// ---------- статус ----------
+async function loadStatus() {
+  try {
+    const status = await api("/api/status");
+    lastStatus = status;
+    renderStatus(status);
+    // Пока модель обучается — опрашиваем каждые 5 секунд.
+    if (status.training) {
+      wasTraining = true;
+      if (!statusTimer) statusTimer = setInterval(loadStatus, 5000);
+    } else {
+      if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+      if (wasTraining) { wasTraining = false; loadValidation(); }
+    }
+    updateButtons();
+    return status;
+  } catch (e) {
+    $("status").innerHTML = `<span class="pill err">Не удалось получить состояние сервера: ${escapeHtml(e.message)}</span>`;
+    return null;
+  }
+}
+
+function renderStatus(s) {
+  const pills = [];
+  if (s.training) pills.push(["warn", '<span class="spinner"></span> Модель обучается… запуск станет доступен после обучения']);
+  else if (s.training_error) pills.push(["err", "Обучение модели завершилось ошибкой: " + escapeHtml(s.training_error)]);
+  else if (s.model_ready) pills.push(["ok", "Модель готова"]);
+  else pills.push(["warn", "Модель ещё не обучена"]);
+
+  const modules = s.modules || {};
+  if (modules.agent === false) pills.push(["warn", "Модуль агента ещё не готов: запуск прогноза пока недоступен"]);
+  if (modules.model === false) pills.push(["warn", "Модуль расчёта модели ещё не готов"]);
+
+  pills.push(s.weather_cache_ok ? ["ok", "Сохранённые прогнозы погоды есть"] : ["warn", "Сохранённых прогнозов погоды нет"]);
+  pills.push(s.offline ? ["", "Режим без интернета: погода только из сохранённых"] : ["", "Погода загружается из интернета"]);
+  pills.push(s.llm_enabled ? ["ok", "Вопросы агенту включены"] : ["", "Вопросы агенту отключены (нет ключа)"]);
+
+  $("status").innerHTML = pills.map(([cls, text]) => `<span class="pill ${cls}">${text}</span>`).join("");
+  $("chat-section").style.display = s.llm_enabled ? "" : "none";
+}
+
+function updateButtons() {
+  const training = !!(lastStatus && lastStatus.training);
+  $("run-btn").disabled = busy || training;
+  $("run-all-btn").disabled = busy || training;
+}
+
+// ---------- проверка даты на клиенте ----------
+function validateDate(value) {
+  if (!value) return "Укажите дату выпуска прогноза.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || isNaN(Date.parse(value))) {
+    return `«${value}» не похоже на дату. Нужна дата от 31.01.2026 до 28.02.2026.`;
+  }
+  if (value < PERIOD_START || value > PERIOD_END) {
+    return `Дата ${formatDay(value)} вне периода. Допустимы даты от 31.01.2026 до 28.02.2026.`;
+  }
+  return null;
+}
+
+// ---------- запуск на один день ----------
+async function runOneDay() {
+  const date = $("issue-date").value;
+  const problem = validateDate(date);
+  showError($("run-error"), null);
+  if (problem) { showError($("run-error"), problem); return; }
+
+  setBusy(true, "Агент работает…");
+  try {
+    const result = await api("/api/run?issue_date=" + encodeURIComponent(date), { method: "POST" });
+    renderResult(result, true);
+  } catch (e) {
+    showError($("run-error"), "Прогноз на " + formatDay(date) + " не получен: " + e.message);
+  } finally {
+    setBusy(false);
+    loadJournal();
+    loadStatus();
+  }
+}
+
+function setBusy(on, text) {
+  busy = on;
+  if (text) $("run-wait-text").textContent = text;
+  show($("run-wait"), on);
+  if (!on) show($("progress"), false);
+  updateButtons();
+}
+
+// ---------- прогон всего периода по одному дню ----------
+function periodDates() {
+  const dates = [];
+  const d = new Date(PERIOD_START + "T00:00:00Z");
+  const end = new Date(PERIOD_END + "T00:00:00Z");
+  while (d <= end) {
+    dates.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+async function runWholePeriod() {
+  const dates = periodDates();
+  showError($("run-error"), null);
+  setBusy(true, `0 из ${dates.length}`);
+  show($("progress"), true);
+  $("progress-bar").style.width = "0%";
+  let lastResult = null;
+  try {
+    for (let i = 0; i < dates.length; i++) {
+      $("run-wait-text").textContent = `Агент работает… ${i + 1} из ${dates.length}: ${dates[i]}`;
+      try {
+        lastResult = await api("/api/run?issue_date=" + dates[i], { method: "POST" });
+      } catch (e) {
+        showError($("run-error"), `Прогон остановлен на ${dates[i]} (${i + 1} из ${dates.length}): ${e.message}`);
+        break;
+      }
+      $("progress-bar").style.width = Math.round(((i + 1) / dates.length) * 100) + "%";
+    }
+    if (lastResult) {
+      $("issue-date").value = lastResult.issue_date || $("issue-date").value;
+      renderResult(lastResult, true);
+    }
+  } finally {
+    setBusy(false);
+    loadJournal();
+    loadStatus();
+  }
+}
+
+// ---------- показ результата ----------
+// result: ответ /api/run (steps, note, analysis, rows) или /api/forecast (только rows)
+function renderResult(result, withSteps) {
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const date = result.issue_date || (rows[0] && rows[0].issue_date) || $("issue-date").value;
+  show($("result-section"), true);
+  $("result-title").textContent = "Прогноз, выпущенный " + formatDay(date);
+
+  renderSteps(withSteps ? result.steps : null);
+  const note = withSteps ? result.note : "";
+  $("note").textContent = note || "";
+  show($("note"), !!note);
+  renderFacts(withSteps ? result.analysis : null);
+  renderCharts(rows);
+  renderTable(rows);
+
+  $("csv-link").href = "/api/forecast/" + encodeURIComponent(date) + ".csv";
+  $("csv-link").setAttribute("download", "forecast_" + date + ".csv");
+  $("rows-count").textContent = rows.length ? `строк: ${rows.length}` : "строк нет";
+}
+
+function renderSteps(steps) {
+  const list = $("steps");
+  list.innerHTML = "";
+  if (!Array.isArray(steps) || !steps.length) { show($("steps-block"), false); return; }
+  for (const step of steps) {
+    const title = STEP_NAMES[step.name] || step.name || "шаг";
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="step-name">${escapeHtml(title)}</span>
+      <span class="step-time">(${num(step.seconds, 2)} с)</span>
+      ${step.name && STEP_NAMES[step.name] ? `<span class="muted small">${escapeHtml(step.name)}</span>` : ""}
+      <div>${escapeHtml(step.summary || "")}</div>`;
+    list.appendChild(li);
+  }
+  show($("steps-block"), true);
+}
+
+// Краткие числа из analysis. Любое поле может отсутствовать.
+function renderFacts(analysis) {
+  const box = $("facts");
+  box.innerHTML = "";
+  if (!analysis || typeof analysis !== "object") return;
+  const cards = [];
+  const totals = analysis.totals || {};
+
+  const turbineKeys = Object.keys(totals).filter((k) => k !== "all").sort();
+  for (const key of [...turbineKeys, "all"]) {
+    const t = totals[key];
+    if (!t) continue;
+    const title = key === "all" ? "Обе турбины" : "Турбина " + key;
+    const items = [];
+    if (t.total !== undefined) items.push(`За 48 часов (p50): <b>${num(t.total)}</b>`);
+    if (t.p10_total !== undefined && t.p90_total !== undefined) items.push(`Коридор: от ${num(t.p10_total)} до ${num(t.p90_total)}`);
+    for (const [day, value] of Object.entries(t.by_day || {})) items.push(`${formatDay(day)}: ${num(value)}`);
+    if (t.peak_hour) items.push(`Пик: ${formatTime(t.peak_hour)}, ${num(t.peak_p50)}`);
+    cards.push([title, items]);
+  }
+
+  const other = [];
+  const lowCount = analysis.low_confidence_count ?? (Array.isArray(analysis.low_confidence_hours) ? analysis.low_confidence_hours.length : null);
+  if (lowCount !== null && lowCount !== undefined) other.push(`Часов низкой уверенности: <b>${lowCount}</b>`);
+  if (Array.isArray(analysis.extreme_wind_hours)) {
+    const hours = analysis.extreme_wind_hours;
+    other.push(hours.length
+      ? `Часы сильного ветра (турбина может остановиться): ${hours.map((h) => `${formatTime(h.target_time, false)} (${num(h.ws100, 1)} м/с)`).join(", ")}`
+      : "Часов сильного ветра нет");
+  }
+  if (analysis.weather) {
+    const w = analysis.weather;
+    other.push(`Ветер 100 м: ${num(w.ws100_min, 1)}…${num(w.ws100_max, 1)} м/с, в среднем ${num(w.ws100_mean, 1)}`);
+    other.push(`Температура: ${num(w.temp_min, 1)}…${num(w.temp_max, 1)} °C`);
+  }
+  if (other.length) cards.push(["Условия и риски", other]);
+
+  const err = analysis.error_yesterday;
+  if (err) {
+    const items = [`Средняя ошибка (MAE): <b>${num(err.mae)}</b>`];
+    if (err.rmse !== undefined) items.push(`RMSE: ${num(err.rmse)}`);
+    if (err.bias !== undefined) items.push(`Смещение: ${signed(err.bias)}`);
+    if (err.coverage_p10_p90 !== undefined) items.push(`Факт внутри коридора: ${Math.round(Number(err.coverage_p10_p90) * 100)}% часов`);
+    cards.push([`Ошибка вчерашнего прогноза${err.day ? " за " + formatDay(err.day) : ""}`, items]);
+  }
+
+  const delta = analysis.delta_vs_previous;
+  if (delta) {
+    const items = [];
+    if (delta.note) items.push(escapeHtml(delta.note));
+    if (delta.hours) items.push(`Общих часов: ${delta.hours}`);
+    if (delta.sum_p50_prev !== undefined) items.push(`Было ${num(delta.sum_p50_prev)}, стало ${num(delta.sum_p50_new)} (${signed(delta.delta_energy)})`);
+    if (delta.mean_abs_delta_p50 !== undefined) items.push(`Средний сдвиг по часу: ${num(delta.mean_abs_delta_p50)}`);
+    if (delta.hours_changed_over_threshold !== undefined) items.push(`Часов с заметным сдвигом: ${delta.hours_changed_over_threshold}`);
+    cards.push(["Сравнение со вчерашним прогнозом", items]);
+  }
+
+  box.innerHTML = cards.map(([title, items]) =>
+    `<div class="fact"><h4>${escapeHtml(title)}</h4><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>`
+  ).join("") + '<div class="muted small" style="grid-column:1/-1">Суммы — в долях номинала, умноженных на часы: 24 значит «сутки на полной мощности».</div>';
+}
+
+// ---------- графики SVG ----------
+function renderCharts(rows) {
+  const box = $("charts");
+  box.innerHTML = "";
+  const turbines = [...new Set(rows.map((r) => String(r.turbine)))].sort();
+  if (!turbines.length) { box.innerHTML = '<p class="muted">Строк прогноза нет.</p>'; return; }
+  for (const t of turbines) {
+    const data = rows.filter((r) => String(r.turbine) === t)
+      .sort((a, b) => String(a.target_time).localeCompare(String(b.target_time)));
+    const div = document.createElement("div");
+    div.className = "chart";
+    div.innerHTML = `<h3 style="margin-bottom:4px">Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data);
+    box.appendChild(div);
+  }
+}
+
+function buildChartSvg(data) {
+  const W = 1000, H = 300;
+  const left = 46, right = 16, top = 12, bottom = 40;
+  const plotW = W - left - right, plotH = H - top - bottom;
+  const n = data.length;
+  const x = (i) => left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
+  const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+  const y = (v) => top + (1 - clamp(v)) * plotH;
+
+  const parts = [];
+  // Сетка и подписи оси Y
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#e3e6eb" stroke-width="1"/>`);
+    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="12" fill="#5d6675">${v}</text>`);
+  }
+  // Подписи оси X каждые 6 часов
+  data.forEach((r, i) => {
+    if (i % 6 !== 0 && i !== n - 1) return;
+    if (i === n - 1 && i % 6 !== 0) return;
+    parts.push(`<line x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${top + plotH}" stroke="#f0f2f5" stroke-width="1"/>`);
+    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="12" fill="#5d6675">${formatTime(r.target_time, false)}</text>`);
+  });
+  // Коридор p10–p90
+  if (n) {
+    const upper = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p90).toFixed(1)}`);
+    const lower = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p10).toFixed(1)}`).reverse();
+    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="#1f5fbf" fill-opacity="0.25" stroke="none"/>`);
+    // Линия p50
+    const line = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`).join(" ");
+    parts.push(`<polyline points="${line}" fill="none" stroke="#1f5fbf" stroke-width="2.2"/>`);
+    // Точки низкой уверенности
+    data.forEach((r, i) => {
+      if (r.confidence === "low") {
+        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="4.5" fill="#d9480f"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
+      }
+    });
+  }
+  // Оси
+  parts.push(`<line x1="${left}" x2="${left}" y1="${top}" y2="${top + plotH}" stroke="#9aa3b0"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#9aa3b0"/>`);
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График прогноза на 48 часов">${parts.join("")}</svg>`;
+}
+
+// ---------- таблица ----------
+function renderTable(rows) {
+  const body = $("forecast-rows");
+  const sorted = [...rows].sort((a, b) =>
+    String(a.target_time).localeCompare(String(b.target_time)) || String(a.turbine).localeCompare(String(b.turbine)));
+  body.innerHTML = sorted.map((r) => {
+    const conf = r.confidence === "low" ? "низкая" : r.confidence === "ok" ? "норм" : escapeHtml(r.confidence ?? "—");
+    return `<tr class="${r.confidence === "low" ? "low" : ""}">
+      <td>${formatTime(r.target_time)}</td><td>${escapeHtml(r.turbine)}</td>
+      <td class="num">${num(r.ws100_forecast)}</td><td class="num">${num(r.temp_forecast)}</td>
+      <td class="num">${num(r.p10)}</td><td class="num">${num(r.p50)}</td><td class="num">${num(r.p90)}</td>
+      <td>${conf}</td><td class="wrap">${escapeHtml(r.note ?? "")}</td></tr>`;
+  }).join("") || '<tr><td colspan="9" class="muted">Строк нет</td></tr>';
+}
+
+// ---------- проверка на январе ----------
+async function loadValidation() {
+  const box = $("validation-body");
+  try {
+    const data = await api("/api/validation");
+    box.innerHTML = renderMetrics(data.metrics) + renderValidationExtras(data);
+  } catch (e) {
+    box.innerHTML = `<div class="info">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function isPlainObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+
+function formatValue(v) {
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : num(v);
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") return escapeHtml(JSON.stringify(v));
+  return escapeHtml(v);
+}
+
+// Структура metrics.json заранее не известна: словарь словарей чисел — таблица, иначе список «ключ: значение».
+function renderMetrics(metrics) {
+  if (!isPlainObject(metrics) || !Object.keys(metrics).length) return '<p class="muted">Метрик нет.</p>';
+  const rowKeys = Object.keys(metrics);
+  const isMatrix = rowKeys.every((k) => isPlainObject(metrics[k]) &&
+    Object.values(metrics[k]).every((v) => v === null || typeof v === "number"));
+  if (isMatrix) {
+    const cols = [];
+    for (const k of rowKeys) for (const c of Object.keys(metrics[k])) if (!cols.includes(c)) cols.push(c);
+    return `<div class="table-wrap"><table><thead><tr><th></th>${cols.map((c) => `<th class="num">${escapeHtml(c)}</th>`).join("")}</tr></thead>
+      <tbody>${rowKeys.map((k) => `<tr><th>${escapeHtml(k)}</th>${cols.map((c) => `<td class="num">${formatValue(metrics[k][c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  }
+  const flat = [];
+  (function walk(obj, prefix) {
+    for (const [k, v] of Object.entries(obj)) {
+      const key = prefix ? prefix + "." + k : k;
+      if (isPlainObject(v)) walk(v, key);
+      else flat.push([key, v]);
+    }
+  })(metrics, "");
+  return `<div class="table-wrap"><table><thead><tr><th>Показатель</th><th class="num">Значение</th></tr></thead><tbody>
+    ${flat.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${formatValue(v)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function renderValidationExtras(data) {
+  let html = '<p class="muted small">Меньше — лучше для ошибок (MAE, RMSE, pinball). Модель полезна, если её ошибка ниже, чем у persistence и curve.</p>';
+  if (Array.isArray(data.rows) && data.rows.length) {
+    html += `<p class="muted small">Часов в проверке: ${data.rows.length} (строки validation.csv, по обеим турбинам).</p>`;
+  }
+  if (data.report) {
+    html += `<details><summary>Отчёт о проверке</summary><pre>${escapeHtml(data.report)}</pre></details>`;
+  }
+  return html;
+}
+
+// ---------- журнал ----------
+async function loadJournal() {
+  try {
+    const text = await api("/api/journal");
+    $("journal").textContent = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+  } catch (e) {
+    $("journal").textContent = "Журнал не загрузился: " + e.message;
+  }
+}
+
+// ---------- вопросы агенту ----------
+function renderChat() {
+  $("chat-log").innerHTML = chatHistory.map((m) =>
+    `<div class="msg ${m.role}"><span class="who">${m.role === "user" ? "Вы" : "Агент"}</span>${escapeHtml(m.content)}</div>`
+  ).join("");
+}
+
+async function askAgent() {
+  const question = $("question").value.trim();
+  showError($("ask-error"), null);
+  if (!question) { showError($("ask-error"), "Напишите вопрос."); return; }
+  const history = chatHistory.slice();
+  chatHistory.push({ role: "user", content: question });
+  renderChat();
+  $("question").value = "";
+  $("ask-btn").disabled = true;
+  show($("ask-wait"), true);
+  try {
+    const data = await api("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, history }),
+    });
+    chatHistory.push({ role: "assistant", content: String(data.answer ?? "") });
+    renderChat();
+  } catch (e) {
+    showError($("ask-error"), "Агент не ответил: " + e.message);
+  } finally {
+    $("ask-btn").disabled = false;
+    show($("ask-wait"), false);
+  }
+}
+
+// ---------- загрузка страницы ----------
+async function loadSavedForecast(date) {
+  try {
+    const data = await api("/api/forecast/" + encodeURIComponent(date));
+    renderResult(data, false);
+  } catch (e) {
+    showError($("run-error"), e.message);
+  }
+}
+
+async function init() {
+  $("run-btn").addEventListener("click", runOneDay);
+  $("run-all-btn").addEventListener("click", runWholePeriod);
+  $("ask-btn").addEventListener("click", askAgent);
+  $("question").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) askAgent();
+  });
+  // При смене даты показываем уже готовый прогноз, если он есть.
+  $("issue-date").addEventListener("change", () => {
+    const date = $("issue-date").value;
+    if (!validateDate(date) && lastStatus && (lastStatus.forecasts_done || []).includes(date) && !busy) {
+      showError($("run-error"), null);
+      loadSavedForecast(date);
+    }
+  });
+
+  const status = await loadStatus();
+  loadValidation();
+  loadJournal();
+  const date = $("issue-date").value;
+  if (status && (status.forecasts_done || []).includes(date)) loadSavedForecast(date);
+}
+
+init();
+</script>
+</body>
+</html>
