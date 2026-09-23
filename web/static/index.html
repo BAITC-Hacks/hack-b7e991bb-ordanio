@@ -302,6 +302,34 @@
   .hero-actions .hero-cta { margin-top: 0; }
   .hero-link { color: var(--accent); font-weight: 500; text-decoration: none; }
   .hero-link:hover { color: var(--accent-dark); text-decoration: underline; }
+  /* Печать: только результат и проверка, чёрным по белому, таблица целиком */
+  @media print {
+    #hero, .facts-strip, button, #chat-section, #tour-blocker, #tour-card, .status, .how, .chart-tip,
+    #run-wait, #retry-btn, #csv-link, #rows-count, a[href$=".csv"], a[href$=".md"], #tour-link, section:has(#journal-details) { display: none !important; }
+    body { background: #fff; color: #000; }
+    main { max-width: none; padding: 0; }
+    section, #result-section, .summary-card, .day-summary, .table-wrap, .chart, .fact, pre {
+      background: none !important; border-color: #ccc !important; box-shadow: none !important;
+    }
+    .muted, .subtitle, .summary-label, .legend, .step-summary, .facts-list, .about p, .model-info { color: #333 !important; }
+    .table-wrap { max-height: none !important; overflow: visible !important; }
+    thead th { position: static !important; }
+    .chart { overflow: visible !important; break-inside: avoid; }
+    .day-summary-text.clamped { display: block; -webkit-line-clamp: unset; overflow: visible; }
+    .controls input[type=date] { border: 0; padding: 0; }
+    section { break-inside: auto; }
+  }
+  .day-summary { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; margin: 16px 0 8px; }
+  .day-summary-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .day-summary-head .eyebrow { margin-bottom: 0; }
+  .day-summary-source { font-family: var(--mono); font-size: 12px; line-height: 18px; color: var(--muted); }
+  .day-summary-text { font-size: 16px; line-height: 26px; margin-top: 8px; }
+  .day-summary-text.clamped { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  button.link-button {
+    height: auto; padding: 0; margin-top: 6px; border: 0; background: none; color: var(--accent);
+    font-size: 14px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px;
+  }
+  button.link-button:hover:not(:disabled) { background: none; color: var(--accent-dark); }
   .facts-strip { font-family: var(--mono); font-size: 13px; line-height: 20px; color: var(--muted); margin-bottom: 24px; }
   .eyebrow { font-family: var(--mono); font-size: 12px; line-height: 18px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
   .eyebrow-inner { margin-top: 40px; }
@@ -385,6 +413,12 @@
   <section id="result-section" class="hidden">
     <div class="eyebrow">Прогноз</div>
     <h2 id="result-title">Прогноз</h2>
+    <!-- Сводка дня из ответа запуска; при показе готового прогноза её нет -->
+    <div id="day-summary" class="day-summary hidden">
+      <div class="day-summary-head"><span class="eyebrow">Сводка дня</span><span id="day-summary-source" class="day-summary-source"></span></div>
+      <div id="day-summary-text" class="day-summary-text clamped"></div>
+      <button type="button" id="day-summary-toggle" class="link-button hidden">показать полностью</button>
+    </div>
     <div id="steps-block" class="hidden">
       <h3>Что сделал агент</h3>
       <ol id="steps" class="steps"></ol>
@@ -659,6 +693,35 @@ function updateButtons() {
 }
 
 // Следующий день: ставит D+1 в поле и запускает обычный прогноз тем же кодом, что основная кнопка.
+// Предыдущий день: зеркально «Следующему дню», на начале периода ничего не делает
+function runPreviousDay() {
+  const date = $("issue-date").value;
+  if (busy || (lastStatus && lastStatus.training) || validateDate(date) || date <= PERIOD_START) return;
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  $("issue-date").value = d.toISOString().slice(0, 10);
+  runOneDay();
+}
+
+// Клавиши: ← и → листают дни, Enter в поле даты запускает прогноз
+function onKeyNavigation(e) {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (tourSteps.length) return;                         // в обучении свои клавиши
+  const target = e.target;
+  const tag = target && target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT" || (target && target.isContentEditable)) return;
+  const inDate = target === $("issue-date");
+  if (tag === "INPUT" && !inDate) return;
+  if (e.key === "Enter" && inDate) {
+    e.preventDefault();
+    if (!$("run-btn").disabled) runOneDay();
+    return;
+  }
+  if (inDate) return;                                   // стрелки в поле даты двигают его части, не перехватываем
+  if (e.key === "ArrowRight" && !$("next-day-btn").disabled) { e.preventDefault(); runNextDay(); }
+  else if (e.key === "ArrowLeft" && !$("run-btn").disabled) { e.preventDefault(); runPreviousDay(); }
+}
+
 function runNextDay() {
   const date = $("issue-date").value;
   if (validateDate(date) || date >= PERIOD_END) return;
@@ -689,6 +752,7 @@ async function runOneDay() {
   showError($("run-error"), null);
   show($("retry-btn"), false);
   if (problem) { showError($("run-error"), problem); return; }
+  syncUrlDate(date);
 
   setBusy(true, "Агент работает…");
   try {
@@ -763,11 +827,12 @@ function renderResult(result, withSteps) {
   const date = result.issue_date || (rows[0] && rows[0].issue_date) || $("issue-date").value;
   show($("result-section"), true);
   $("result-title").textContent = "Прогноз, выпущенный " + formatDay(date);
+  syncUrlDate(date);
 
   renderSteps(withSteps ? result.steps : null);
-  const note = withSteps ? result.note : "";
-  $("note").textContent = note || "";
-  show($("note"), !!note);
+  // Сводка дня теперь в карточке над графиками; старый блок не показываем, чтобы текст не повторялся
+  show($("note"), false);
+  renderDaySummary(withSteps ? result : null);
   renderFacts(withSteps ? result.analysis : null);
   renderCharts(rows);
   renderChanges(date, rows);
@@ -856,6 +921,23 @@ function renderFacts(analysis) {
   box.innerHTML = cards.map(([title, items]) =>
     `<div class="fact"><h4>${escapeHtml(title)}</h4><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>`
   ).join("") + '<div class="muted small" style="grid-column:1/-1">Суммы — в долях номинала, умноженных на часы: 24 значит «сутки на полной мощности».</div>';
+}
+
+// Карточка «Сводка дня»: текст note и пометка источника; длинный текст свёрнут до 4 строк
+function renderDaySummary(result) {
+  const card = $("day-summary"), text = $("day-summary-text"), toggle = $("day-summary-toggle");
+  const note = result && typeof result.note === "string" ? result.note.trim() : "";
+  if (!note) { show(card, false); return; }
+  const source = result.note_source;
+  // note_source: "template" или "model:<имя модели>"
+  const modelName = String(source || "").replace(/^model:/, "");
+  $("day-summary-source").textContent = !source || source === "template" ? "сводка: шаблон" : `сводка: модель ${modelName}`;
+  text.textContent = note;
+  text.classList.add("clamped");
+  toggle.textContent = "показать полностью";
+  show(card, true);
+  // Ссылка нужна, только если текст правда не помещается в 4 строки
+  show(toggle, text.scrollHeight > text.clientHeight + 2);
 }
 
 // ---------- графики SVG ----------
@@ -1579,6 +1661,12 @@ async function loadSavedForecast(date) {
 
 async function init() {
   initTour();
+  $("day-summary-toggle").addEventListener("click", () => {
+    const text = $("day-summary-text");
+    const clamped = text.classList.toggle("clamped");
+    $("day-summary-toggle").textContent = clamped ? "показать полностью" : "свернуть";
+  });
+  document.addEventListener("keydown", onKeyNavigation);
   $("retry-btn").addEventListener("click", () => {
     if (failedRunDate) $("issue-date").value = failedRunDate;
     runOneDay();
@@ -1619,6 +1707,7 @@ async function init() {
   $("issue-date").addEventListener("change", () => {
     const date = $("issue-date").value;
     updateButtons();
+    syncUrlDate(date);
     if (!validateDate(date) && lastStatus && (lastStatus.forecasts_done || []).includes(date) && !busy) {
       showError($("run-error"), null);
       loadSavedForecast(date);
@@ -1794,7 +1883,38 @@ function initTour() {
 }
 
 // При открытии: показать самый поздний готовый прогноз; если готовых нет, а всё готово к запуску, сделать прогноз на 28.02.
+// Адрес страницы: ?date=ГГГГ-ММ-ДД, чтобы ссылку на прогноз можно было скопировать
+function syncUrlDate(date) {
+  if (validateDate(date)) return;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("date", date);
+    history.replaceState(null, "", url);
+  } catch (e) { /* адрес не меняем, страница работает дальше */ }
+}
+function urlDate() {
+  try {
+    const value = new URL(window.location.href).searchParams.get("date") || "";
+    return validateDate(value) ? null : value;   // кривой параметр игнорируем
+  } catch (e) { return null; }
+}
+
+// Прогноз на дату из адреса: готовый файл, а если его нет (404) — обычный запуск
+async function loadOrRun(date) {
+  $("issue-date").value = date;
+  updateButtons();
+  try {
+    const data = await api("/api/forecast/" + encodeURIComponent(date));
+    renderResult(data, false);
+  } catch (e) {
+    if (e.status === 404) return runOneDay();
+    showError($("run-error"), e.message);
+  }
+}
+
 function showInitialForecast(status) {
+  const fromUrl = urlDate();
+  if (fromUrl) return loadOrRun(fromUrl);
   if (!status) return;
   const done = (status.forecasts_done || []).filter((d) => !validateDate(d)).sort();
   if (done.length) {
