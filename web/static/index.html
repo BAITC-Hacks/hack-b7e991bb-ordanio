@@ -202,6 +202,7 @@
   .facts-list { margin: 16px 0 0; padding-left: 20px; }
 
   /* Чат */
+  .model-info { margin-top: var(--section-gap); padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; line-height: 18px; color: var(--muted); }
   .hints { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
   .hints button { white-space: normal; height: auto; min-height: 32px; padding: 6px 12px; text-align: left; }
   .chat-log { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -294,6 +295,8 @@
     <h3>Таблица прогноза</h3>
     <div class="row">
       <a id="csv-link" href="#">Скачать CSV</a>
+      <a href="/api/forecasts.csv">Скачать все прогнозы одним CSV</a>
+      <a href="/api/journal.md">Скачать журнал</a>
       <span id="rows-count" class="muted small"></span>
     </div>
     <div class="table-wrap">
@@ -342,6 +345,9 @@
     </div>
     <div id="ask-error" class="error hidden"></div>
   </section>
+
+  <!-- Сведения о модели из status.model_info; скрыто, если их нет -->
+  <footer id="model-info" class="model-info hidden"></footer>
 
 </main>
 
@@ -436,6 +442,7 @@ async function loadStatus() {
     const status = await api("/api/status");
     lastStatus = status;
     renderStatus(status);
+    renderModelInfo(status);
     // Пока модель обучается — опрашиваем каждые 5 секунд.
     if (status.training) {
       wasTraining = true;
@@ -469,6 +476,21 @@ function renderStatus(s) {
 
   $("status").innerHTML = pills.map(([cls, text]) => `<span class="pill ${cls}">${text}</span>`).join("");
   $("chat-section").style.display = s.llm_enabled ? "" : "none";
+}
+
+// Строка внизу: когда обучена модель, на каких данных, сколько примеров.
+function renderModelInfo(status) {
+  const el = $("model-info");
+  const info = status && status.model_info;
+  if (!info || typeof info !== "object") { show(el, false); return; }
+  const dash = (v, f) => (v === null || v === undefined || v === "" ? "—" : f(v));
+  const trained = dash(info.trained_at, (v) => formatTime(v));
+  const first = dash(info.facts_first, formatDay);
+  const last = dash(info.facts_last, formatDay);
+  const rows = dash(info.train_rows, (v) => escapeHtml(String(v).replace(/\B(?=(\d{3})+(?!\d))/g, " ")));
+  // formatTime и formatDay уже экранируют текст, поэтому innerHTML
+  el.innerHTML = `Модель обучена ${trained}, данные турбин ${first}–${last}, обучающих примеров ${rows}, выпуск прогноза в 23:59 Asia/Almaty`;
+  show(el, true);
 }
 
 function updateButtons() {
