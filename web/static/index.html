@@ -163,7 +163,17 @@
   .fact ul { margin: 0; padding-left: 18px; }
 
   /* Графики */
-  .chart { margin-top: 16px; }
+  .chart { margin-top: 16px; position: relative; }
+  .chart-tip {
+    position: absolute; z-index: 2; pointer-events: none; min-width: 150px;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px;
+    font-size: 12px; line-height: 18px;
+  }
+  .tip-time { font-family: var(--mono); font-weight: 500; margin-bottom: 4px; }
+  .tip-row { display: flex; justify-content: space-between; gap: 16px; font-family: var(--mono); color: var(--muted); }
+  .tip-row.tip-main { color: var(--text); font-weight: 500; }
+  .tip-wind { margin-top: 4px; color: var(--muted); }
+  .hover-area { cursor: crosshair; }
   .chart h3 { margin: 8px 0 4px; }
   .chart svg { width: 100%; height: auto; display: block; font-family: var(--mono); }
   .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12px; line-height: 18px; color: var(--muted); margin-top: 4px; }
@@ -299,8 +309,10 @@
     <h3>График по турбинам</h3>
     <div class="legend">
       <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>p50: медианный прогноз</span>
-      <span><span class="swatch" style="background:var(--band);opacity:.14"></span>p10–p90: оценочный диапазон</span>
+      <span><span class="swatch" style="background:var(--band);opacity:.18"></span>p10–p90: оценочный диапазон</span>
       <span><span class="swatch" style="background:var(--low);width:7px;height:7px;border-radius:50%"></span>низкая уверенность</span>
+      <span><span class="swatch" style="background:#5E6B64;height:1px;vertical-align:4px"></span>ветер на 100 м, м/с (правая ось)</span>
+      <span><span class="swatch" style="background:#F1F3F0;border:1px solid var(--line)"></span>ночь, 18:00–06:00</span>
     </div>
     <div id="validation-brief" class="validation-brief hidden"></div>
     <div id="charts"></div>
@@ -313,6 +325,8 @@
       <span><span class="swatch" style="border-top:2px dashed #8a94a3;height:0;vertical-align:3px"></span>вчерашний выпуск (упреждение 48 ч)</span>
       <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>сегодняшний выпуск (упреждение 24 ч)</span>
       <span><span class="swatch" style="background:#f08c00;opacity:.25"></span>пересчитано больше чем на 0.15</span>
+      <span><span class="swatch" style="background:rgba(39,102,83,.18)"></span>сегодня выше</span>
+      <span><span class="swatch" style="background:#FFF3D6;border:1px solid var(--line)"></span>сегодня ниже</span>
     </div>
     <div id="changes"></div>
     </div>
@@ -746,14 +760,18 @@ function renderCharts(rows) {
       .sort((a, b) => String(a.target_time).localeCompare(String(b.target_time)));
     const div = document.createElement("div");
     div.className = "chart";
-    div.innerHTML = `<h3>Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data);
+    div.innerHTML = `<h3>Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data) + '<div class="chart-tip hidden"></div>';
     box.appendChild(div);
+    attachChartHover(div, data);
   }
 }
 
+// Геометрия графика турбины в единицах viewBox: одна для построения и для наведения.
+const CHART = { W: 1000, H: 300, left: 46, right: 48, top: 22, bottom: 40 };
+const WIND_MAX = 20;   // правая ось ветра, м/с; выше обрезается по верху
+
 function buildChartSvg(data) {
-  const W = 1000, H = 300;
-  const left = 46, right = 16, top = 12, bottom = 40;
+  const { W, H, left, right, top, bottom } = CHART;
   const plotW = W - left - right, plotH = H - top - bottom;
   const n = data.length;
   const x = (i) => left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
@@ -761,11 +779,39 @@ function buildChartSvg(data) {
   const y = (v) => top + (1 - clamp(v)) * plotH;
 
   const parts = [];
+  const step = n > 1 ? plotW / (n - 1) : plotW;
+  const hourOf = (r) => { const m = /T(\d{2}):/.exec(String(r.target_time || "")); return m ? Number(m[1]) : null; };
+  // Ночные часы 00–06 и 18–24 фоном, соседние часы склеиваются в одну полосу
+  let nightStart = null;
+  data.forEach((r, i) => {
+    const h = hourOf(r);
+    const night = h !== null && (h < 6 || h >= 18);
+    if (night && nightStart === null) nightStart = i;
+    if ((!night || i === n - 1) && nightStart !== null) {
+      const endIdx = night ? i : i - 1;
+      const x0 = Math.max(left, x(nightStart) - step / 2), x1 = Math.min(W - right, x(endIdx) + step / 2);
+      parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="#F1F3F0"/>`);
+      nightStart = null;
+    }
+  });
   // Сетка и подписи оси Y
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
     parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#E7EBE8" stroke-width="1"/>`);
     parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5E6B64">${v}</text>`);
   }
+  // Граница суток: тонкая вертикаль и дата сверху
+  data.forEach((r, i) => {
+    if (i === 0 || hourOf(r) !== 0) return;
+    const bx = (x(i) - step / 2).toFixed(1);
+    parts.push(`<line x1="${bx}" x2="${bx}" y1="${top}" y2="${top + plotH}" stroke="#DCE2DD" stroke-width="1" vector-effect="non-scaling-stroke"/>`);
+    parts.push(`<text x="${(Number(bx) + 6).toFixed(1)}" y="${top - 8}" text-anchor="start" font-size="11" fill="#5E6B64">${formatDay(r.target_time).slice(0, 5)}</text>`);
+  });
+  // Правая ось: прогноз ветра на 100 м, 0…20 м/с
+  const yWind = (v) => top + (1 - Math.max(0, Math.min(WIND_MAX, Number(v) || 0)) / WIND_MAX) * plotH;
+  for (const v of [0, 5, 10, 15, 20]) {
+    parts.push(`<text x="${W - right + 8}" y="${yWind(v) + 4}" text-anchor="start" font-size="11" fill="#5E6B64">${v}</text>`);
+  }
+  parts.push(`<text x="${W - 4}" y="${top - 8}" text-anchor="end" font-size="11" fill="#5E6B64">ветер, м/с</text>`);
   // Подписи оси X каждые 6 часов
   data.forEach((r, i) => {
     if (i % 6 !== 0 && i !== n - 1) return;
@@ -776,7 +822,15 @@ function buildChartSvg(data) {
   if (n) {
     const upper = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p90).toFixed(1)}`);
     const lower = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p10).toFixed(1)}`).reverse();
-    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="#276653" fill-opacity="0.14" stroke="none"/>`);
+    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="#276653" fill-opacity="0.18" stroke="none"/>`);
+    // Лёгкая заливка под p50
+    const base = y(0).toFixed(1);
+    const underP50 = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`);
+    parts.push(`<polygon points="${x(0).toFixed(1)},${base} ${underP50.join(" ")} ${x(n - 1).toFixed(1)},${base}" fill="#276653" fill-opacity="0.08" stroke="none"/>`);
+    // Ветер на 100 м по правой оси: тонкая вторичная линия под p50
+    const windPoints = data.filter((r) => Number.isFinite(Number(r.ws100_forecast)) && r.ws100_forecast !== null)
+      .map((r) => `${x(data.indexOf(r)).toFixed(1)},${yWind(r.ws100_forecast).toFixed(1)}`).join(" ");
+    if (windPoints) parts.push(`<polyline points="${windPoints}" fill="none" stroke="#5E6B64" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`);
     // Линия p50
     const line = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`).join(" ");
     parts.push(`<polyline points="${line}" fill="none" stroke="#276653" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`);
@@ -789,6 +843,9 @@ function buildChartSvg(data) {
   }
   // Оси
   parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#DCE2DD"/>`);
+  // Направляющая наведения и прозрачный слой, который ловит мышь и касания
+  parts.push(`<line class="hover-guide" x1="0" x2="0" y1="${top}" y2="${top + plotH}" stroke="#5E6B64" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>`);
+  parts.push(`<rect class="hover-area" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/>`);
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График прогноза на 48 часов">${parts.join("")}</svg>`;
 }
 
@@ -864,7 +921,27 @@ function buildChangesSvg(data) {
   const step = n > 1 ? plotW / (n - 1) : plotW;
 
   const parts = [];
-  // Полосы пересчёта на всю высоту
+  // Область между вчерашней и сегодняшней линией: по отрезкам между соседними часами,
+  // с точкой пересечения там, где линии меняют порядок. Выше вчера — зелёный, ниже — янтарный.
+  const UP = 'fill="#276653" fill-opacity="0.18"', DOWN = 'fill="#FFF3D6"';
+  const pt = (px, py) => `${px.toFixed(1)},${py.toFixed(1)}`;
+  for (let i = 0; i + 1 < n; i++) {
+    const t0 = clamp(data[i].today), t1 = clamp(data[i + 1].today);
+    const y0 = clamp(data[i].yesterday), y1 = clamp(data[i + 1].yesterday);
+    const d0 = t0 - y0, d1 = t1 - y1;
+    const xa = x(i), xb = x(i + 1);
+    if (d0 * d1 >= 0) {
+      if (d0 === 0 && d1 === 0) continue;
+      const fill = d0 + d1 > 0 ? UP : DOWN;
+      parts.push(`<polygon points="${pt(xa, y(t0))} ${pt(xb, y(t1))} ${pt(xb, y(y1))} ${pt(xa, y(y0))}" ${fill} stroke="none"/>`);
+    } else {
+      const k = d0 / (d0 - d1);                    // доля отрезка до пересечения
+      const xc = xa + k * (xb - xa), vc = t0 + k * (t1 - t0);
+      parts.push(`<polygon points="${pt(xa, y(t0))} ${pt(xc, y(vc))} ${pt(xa, y(y0))}" ${d0 > 0 ? UP : DOWN} stroke="none"/>`);
+      parts.push(`<polygon points="${pt(xc, y(vc))} ${pt(xb, y(t1))} ${pt(xb, y(y1))}" ${d1 > 0 ? UP : DOWN} stroke="none"/>`);
+    }
+  }
+  // Полосы пересчёта на всю высоту — поверх заливки
   data.forEach((p, i) => {
     if (Math.abs(p.today - p.yesterday) <= CHANGE_THRESHOLD) return;
     const x0 = Math.max(left, x(i) - step / 2), x1 = Math.min(W - right, x(i) + step / 2);
@@ -883,6 +960,55 @@ function buildChangesSvg(data) {
   parts.push(`<polyline points="${line("today")}" fill="none" stroke="#276653" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`);
   parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#DCE2DD"/>`);
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Сравнение со вчерашним выпуском">${parts.join("")}</svg>`;
+}
+
+// Наведение: ближайший час под курсором или пальцем, направляющая и подсказка внутри контейнера графика.
+function attachChartHover(container, data) {
+  const svg = container.querySelector("svg");
+  const area = svg && svg.querySelector(".hover-area");
+  const guide = svg && svg.querySelector(".hover-guide");
+  const tip = container.querySelector(".chart-tip");
+  const n = data.length;
+  if (!area || !guide || !tip || !n) return;
+  const { W, left, right } = CHART;
+  const plotW = W - left - right;
+  const xOf = (i) => left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
+
+  function showAt(clientX) {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const scale = rect.width / W;
+    const vx = (clientX - rect.left) / scale;
+    const i = Math.max(0, Math.min(n - 1, Math.round(((vx - left) / plotW) * (n - 1))));
+    const r = data[i];
+    const gx = xOf(i);
+    guide.setAttribute("x1", gx); guide.setAttribute("x2", gx);
+    guide.setAttribute("visibility", "visible");
+    tip.innerHTML = `<div class="tip-time">${formatTime(r.target_time, false)}</div>
+      <div class="tip-row"><span>p10</span><span>${num(r.p10)}</span></div>
+      <div class="tip-row tip-main"><span>p50</span><span>${num(r.p50)}</span></div>
+      <div class="tip-row"><span>p90</span><span>${num(r.p90)}</span></div>
+      <div class="tip-wind">ветер 100 м: ${num(r.ws100_forecast, 1)} м/с</div>`;
+    show(tip, true);
+    // Координаты относительно контейнера; у правого края подсказка переворачивается влево
+    const box = container.getBoundingClientRect();
+    const px = rect.left - box.left + gx * scale;
+    const tipW = tip.offsetWidth, tipH = tip.offsetHeight;
+    let tx = px + 12;
+    if (tx + tipW > box.width) tx = px - 12 - tipW;
+    tx = Math.max(0, Math.min(tx, box.width - tipW));
+    const ty = Math.max(0, Math.min(rect.top - box.top + 8, box.height - tipH));
+    tip.style.left = Math.round(tx) + "px";
+    tip.style.top = Math.round(ty) + "px";
+  }
+  function hide() {
+    guide.setAttribute("visibility", "hidden");
+    show(tip, false);
+  }
+  area.addEventListener("mousemove", (e) => showAt(e.clientX));
+  area.addEventListener("mouseleave", hide);
+  area.addEventListener("touchstart", (e) => { if (e.touches[0]) showAt(e.touches[0].clientX); }, { passive: true });
+  area.addEventListener("touchmove", (e) => { if (e.touches[0]) showAt(e.touches[0].clientX); }, { passive: true });
 }
 
 // ---------- таблица ----------
