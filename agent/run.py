@@ -84,8 +84,9 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None, *,
     step.done("p10/p50/p90 по часам, сумма p50: " + ", ".join(
         f"турбина {t} {forecast[forecast['turbine'] == t]['p50'].sum():.2f}" for t in features))
 
+    previous_warnings: list[str] = []
     if previous_forecast is None:
-        previous_forecast = tools.load_previous_forecast(issue_date)
+        previous_forecast = tools.load_previous_forecast(issue_date, previous_warnings)
         if previous_forecast is not None:
             log.info("Вчерашний прогноз взят из файла output/forecasts")
 
@@ -106,9 +107,11 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None, *,
     step = _Step(result, "analyze")
     analysis = tools.analyze(issue_date, forecast, previous_forecast, actuals)
     analysis["weather_source"] = source
+    if previous_warnings:  # битый или пустой вчерашний CSV: день идёт дальше, в журнал уходит предупреждение
+        analysis["previous_forecast_warning"] = previous_warnings[0]
     result.analysis = analysis
-    step.done(f"сумма p50 {analysis['totals']['all']['total']:.2f}, низкой уверенности "
-              f"{analysis['low_confidence_count']} ч, экстремального ветра {len(analysis['extreme_wind_hours'])} ч, "
+    step.done(f"сумма p50 {analysis['totals']['all']['total']:.2f}, пар час–турбина низкой уверенности "
+              f"{analysis['low_confidence_count']}, экстремального ветра {len(analysis['extreme_wind_hours'])} ч, "
               f"предполагаемой остановки {analysis['cutout_hours']} ч")
 
     step = _Step(result, "note")

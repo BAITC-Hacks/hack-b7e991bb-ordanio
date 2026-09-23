@@ -177,7 +177,7 @@ def run_model(features_by_turbine: dict[int, pd.DataFrame]) -> pd.DataFrame:
     if cutout.any():
         forecast.loc[cutout, ["p10", "p50", "p90"]] = 0.0
         forecast.loc[cutout, "note"] = NOTE_CUTOUT
-        log.info("Модель: %d часов с ветром выше %.0f м/с обнулены (гипотеза штатной остановки)",
+        log.info("Модель: %d пар час–турбина с ветром выше %.0f м/с обнулены (гипотеза штатной остановки)",
                  int(cutout.sum()), CUTOUT_WS100)
     for turbine in TURBINES:
         sub = forecast[forecast["turbine"] == turbine]
@@ -294,7 +294,7 @@ def save_forecast(issue_date: str, forecast: pd.DataFrame, weather: pd.DataFrame
     if len(rows) != HORIZON_HOURS * len(TURBINES):
         raise ValueError(f"Прогноз {issue_date}: ожидалось {HORIZON_HOURS * len(TURBINES)} строк, получено {len(rows)}")
     rows.to_csv(path, index=False)
-    log.info("Файл: %s, %d строк, часов низкой уверенности: %d", path, len(rows), int(low.sum()))
+    log.info("Файл: %s, %d строк, пар час–турбина низкой уверенности: %d", path, len(rows), int(low.sum()))
     return path
 
 
@@ -347,7 +347,7 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
                      for t, r in extreme.iterrows()]
     first_mask = (forecast["turbine"] == min(TURBINES)).to_numpy()
     cutout_hours = int((cutout_mask & first_mask).sum())   # часов по одной турбине, как extreme_wind_hours
-    cutout_rows = int(cutout_mask.sum())                   # строк с обнулением на обе турбины
+    cutout_rows = int(cutout_mask.sum())                   # пар час–турбина с обнулением (обе турбины)
     if "weather_lead_source" in forecast.columns and len(forecast):
         weather_lead_source = str(forecast["weather_lead_source"].iloc[0])
     else:
@@ -385,8 +385,8 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
     }
     log.info("Анализ: %s", analysis["weather_lead_check"]["text"])
     log.info(
-        "Анализ: сумма p50 обеих турбин %.2f (по суткам %s), низкой уверенности %d ч, экстремального ветра %d ч, "
-        "предполагаемой остановки %d ч (%d строк), сравнение с вчера: %s, ошибка за вчера: %s",
+        "Анализ: сумма p50 обеих турбин %.2f (по суткам %s), пар час–турбина низкой уверенности %d, экстремального ветра %d ч, "
+        "предполагаемой остановки %d ч (%d пар час–турбина), сравнение с вчера: %s, ошибка за вчера: %s",
         totals["all"]["total"], totals["all"]["by_day"], len(low_hours), len(extreme_hours),
         cutout_hours, cutout_rows,
         "нет вчерашнего прогноза" if delta is None else f"{delta['hours']} общих часов, средний сдвиг p50 {delta['mean_delta_p50']:+.3f}",
@@ -424,19 +424,41 @@ def write_journal(issue_date: str, analysis: dict, note: str) -> None:
 
 # ---------------------------------------------------------------- вспомогательное
 
-def load_previous_forecast(issue_date: str) -> pd.DataFrame | None:
-    """Прогноз, выпущенный днём раньше, из output/forecasts, если файл есть. Формат как у run_model."""
+def load_previous_forecast(issue_date: str, warnings: list | None = None) -> pd.DataFrame | None:
+    """Прогноз, выпущенный днём раньше, из output/forecasts, если файл есть. Формат как у run_model.
+    Битый или пустой файл не роняет день: предупреждение в лог (и в список warnings, если передан), возврат None."""
     prev_date = (pd.Timestamp(issue_date) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    path = os.path.join(FORECASTS_DIR, f"forecast_{prev_date}.csv")
+    name = f"forecast_{prev_date}.csv"
+    path = os.path.join(FORECASTS_DIR, name)
     if not os.path.exists(path):
         return None
-    return read_forecast_csv(path)
+    try:
+        previous = read_forecast_csv(path)
+        if previous.empty:
+            raise ValueError("в файле нет ни одной строки прогноза")
+        return previous
+    except Exception as exc:
+        if isinstance(exc, pd.errors.EmptyDataError):
+            reason = "файл пустой, колонок нет"
+        elif type(exc) is ValueError:  # наши русские причины из read_forecast_csv и проверки пустоты
+            reason = str(exc)
+        else:
+            reason = f"{type(exc).__name__}: {exc}"
+        text = f"вчерашний прогноз {name} не прочитан: {reason}, сравнить не с чем"
+        log.warning("Вчерашний прогноз: %s", text)
+        if warnings is not None:
+            warnings.append(text)
+        return None
 
 
 def read_forecast_csv(path: str) -> pd.DataFrame:
     """Читает CSV прогноза обратно в формат run_model (индекс time, turbine, p10, p50, p90, ws100, temp2m, note);
     если в файле есть weather_lead_hours, weather_run_time, issue_timestamp, они тоже переносятся."""
     rows = pd.read_csv(path, keep_default_na=False)
+    required = ["target_time", "turbine", "p10", "p50", "p90", "ws100_forecast", "temp_forecast", "note"]
+    missing = [c for c in required if c not in rows.columns]
+    if missing:
+        raise ValueError(f"в файле нет колонок {', '.join(missing)}")
     time = pd.DatetimeIndex(pd.to_datetime(rows["target_time"], utc=True), name="time").tz_convert(TZ)
     out = pd.DataFrame({
         "turbine": rows["turbine"].astype(int).values,
@@ -641,7 +663,7 @@ def _ru_moment(ts: pd.Timestamp) -> str:
 
 
 def _weather_lead_check(issue_date: str, forecast: pd.DataFrame) -> dict:
-    """Проверка, что каждое значение погоды предсказано не позже момента выпуска:
+    """Проверка по номинальному упреждению, что каждое значение погоды рассчитано не позже момента выпуска:
     weather_run_time <= issue_timestamp по всем часам; неизвестное упреждение — тоже не пройдено."""
     issue_ts = issue_timestamp(issue_date)
     first = forecast[forecast["turbine"] == min(TURBINES)]
@@ -660,13 +682,13 @@ def _weather_lead_check(issue_date: str, forecast: pd.DataFrame) -> dict:
     n_unknown = int(unknown.sum())
     ok = total > 0 and late == 0 and n_unknown == 0
     if ok:
-        text = (f"Все значения погоды предсказаны не позже момента выпуска: самое позднее {_ru_moment(max_run)} "
-                f"при выпуске {_ru_moment(issue_ts)} {tz_note}")
+        text = (f"По номинальному упреждению все значения погоды рассчитаны не позже момента выпуска: самое позднее "
+                f"время расчёта {_ru_moment(max_run)} при выпуске {_ru_moment(issue_ts)} {tz_note}")
     else:
         parts = []
         if late:
-            parts.append(f"{late} ч из {total} предсказаны позже момента выпуска {_ru_moment(issue_ts)} "
-                         f"(самое позднее {_ru_moment(max_run)}) {tz_note}")
+            parts.append(f"{late} ч из {total} рассчитаны позже момента выпуска {_ru_moment(issue_ts)} "
+                         f"(самое позднее время расчёта {_ru_moment(max_run)}) {tz_note}")
         if n_unknown:
             if "weather_source" in first.columns:
                 srcs = sorted({str(s) for s in first.loc[unknown, "weather_source"]})
@@ -675,10 +697,11 @@ def _weather_lead_check(issue_date: str, forecast: pd.DataFrame) -> dict:
             src_text = ", ".join("архив прогнозов historical_forecast, момент расчёта в нём не записан"
                                  if s == "historical_forecast" else s for s in srcs)
             parts.append(f"упреждение погоды неизвестно для {n_unknown} ч из {total} (источник: {src_text}), "
-                         f"подтвердить, что эти значения предсказаны не позже выпуска {_ru_moment(issue_ts)}, нельзя")
+                         f"подтвердить, что эти значения рассчитаны не позже выпуска {_ru_moment(issue_ts)}, нельзя")
         if total == 0:
             parts.append("часов прогноза нет")
-        text = "Проверка момента расчёта погоды не пройдена: " + "; ".join(parts)
+        text = ("По номинальному упреждению проверка момента расчёта погоды не пройдена, нарушение: "
+                + "; ".join(parts))
     return {
         "issue_timestamp": issue_ts.isoformat(),
         "max_weather_run_time": max_run.isoformat() if max_run is not None and pd.notna(max_run) else None,
@@ -714,7 +737,9 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
                  + f" | {totals['all']['total']:.2f} | |")
     lines.append("")
     delta = analysis["delta_vs_previous"]
-    if delta is None:
+    if delta is None and analysis.get("previous_forecast_warning"):
+        lines.append(f"Изменения к вчерашнему прогнозу: {analysis['previous_forecast_warning']}.")
+    elif delta is None:
         lines.append("Изменения к вчерашнему прогнозу: вчерашнего прогноза нет, сравнивать не с чем.")
     elif delta.get("hours", 0) == 0:
         lines.append("Изменения к вчерашнему прогнозу: общих часов нет.")
@@ -724,14 +749,14 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
             f"{_hours_word(delta['hours'])} "
             f"({_ru_time(delta['overlap_start'])} … {_ru_time(delta['overlap_end'])}); сумма p50 обеих турбин была "
             f"{delta['sum_p50_prev']:.2f}, стала {delta['sum_p50_new']:.2f} ({delta['delta_energy']:+.2f}); "
-            f"часов с изменением больше {DELTA_P50_LOW}: {delta['hours_changed_over_threshold']}."
+            f"пар час–турбина с изменением p50 больше {DELTA_P50_LOW}: {delta['hours_changed_over_threshold']}."
         )
     lines.append("")
     low = analysis["low_confidence_hours"]
     if not low:
-        lines.append(f"Часы низкой уверенности: нет ({threshold_text(analysis)}).")
+        lines.append(f"Пары час–турбина низкой уверенности: нет ({threshold_text(analysis)}).")
     else:
-        lines.append(f"Часы низкой уверенности ({len(low)}), {threshold_text(analysis)}:")
+        lines.append(f"Пары час–турбина низкой уверенности ({len(low)}), {threshold_text(analysis)}:")
         lines.append("")
         for h in low[:24]:
             lines.append(f"- {_ru_time(h['target_time'])}, турбина {h['turbine']}: p50 {h['p50']:.2f}, {h['reason']}")

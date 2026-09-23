@@ -72,8 +72,13 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
             "- Единицы называй словами: p10/p50/p90 и пики — «доля номинальной мощности» (от 0 до 1); суммы "
             "за период — «сумма нормализованной мощности по часам, доля номинала × час»; ветер — м/с; температура — °C. "
             "Суммы p10 и p90 по часам — это сумма квантилей, а не интервал суточной энергии; так их и не называй.\n"
-            "- Поле weather_lead_check: перескажи одной фразой его text (проверка, что вся погода предсказана не "
-            "позже момента выпуска); если ok равно false, прямо скажи, что проверка не пройдена и почему.\n"
+            "- Поле weather_lead_check: перескажи одной фразой его text (проверка по номинальному упреждению, что вся "
+            "погода рассчитана не позже момента выпуска; называй её именно «по номинальному упреждению»); если ok "
+            "равно false, прямо скажи, что по номинальному упреждению проверка не пройдена и почему.\n"
+            "- Счётчики low_confidence_count, hours_changed_over_threshold и cutout_rows считают строки «час × турбина» "
+            "(до 96 за выпуск), а не часы: называй их «пар час–турбина», не «часов». Часами называй только hours, "
+            "delta_vs_previous.hours и cutout_hours.\n"
+            "- Если есть поле previous_forecast_warning, перескажи его: вчерашний прогноз не прочитан, сравнивать не с чем.\n"
             "- Поле cutout_hours — часы предполагаемой остановки (ветер выше 25 м/с, порог не подтверждён "
             "паспортом турбин): все квантили там приняты равными 0, уверенность low. Если cutout_hours больше 0, "
             "назови их число этими словами; если 0, напиши «Часов предполагаемой остановки: нет». Не выдавай "
@@ -87,7 +92,7 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
             "напиши, что вчерашнего прогноза для сравнения нет.\n"
             "- Если error_yesterday равно null, напиши «факта за вчера нет»; иначе назови ошибку вчерашнего "
             "прогноза по факту.\n"
-            "- Про часы низкой уверенности назови их число и порог; порог словами: "
+            "- Про пары час–турбина низкой уверенности назови их число и порог; порог словами: "
             f"{_threshold_text(analysis)}.\n\n"
             f"Данные:\n{json.dumps(analysis, ensure_ascii=False)}"
         )
@@ -118,8 +123,9 @@ def template_note(analysis: dict) -> str:
         f"{w['ws100_mean']:.1f} м/с; температура от {w['temp_min']:.1f} до {w['temp_max']:.1f} °C."
     )
     check = analysis.get("weather_lead_check")
-    if check:
-        parts.append(check["text"] + ".")
+    if check:  # в журнале эта фраза уже стоит отдельной строкой; здесь она внутри предложения
+        text = str(check["text"])
+        parts.append("Момент расчёта погоды: " + text[:1].lower() + text[1:] + ".")
     per_t = "; ".join(
         f"турбина {t}: " + ", ".join(f"{_ru_day(d)} — {totals[str(t)]['by_day'][d]:.2f}" for d in days)
         + f", всего {totals[str(t)]['total']:.2f}" for t in analysis["turbines"]
@@ -130,7 +136,10 @@ def template_note(analysis: dict) -> str:
                  f"Все суммы здесь — сумма нормализованной мощности по часам (доля номинала × час); суммы p10 и p90 "
                  f"по часам — это сумма квантилей, а не интервал суточной энергии.")
     delta = analysis["delta_vs_previous"]
-    if delta is None:
+    warning = analysis.get("previous_forecast_warning")
+    if delta is None and warning:
+        parts.append(warning[:1].upper() + warning[1:] + ".")
+    elif delta is None:
         parts.append("Вчерашнего прогноза нет, поэтому сравнение день к дню не проводилось.")
     elif delta.get("hours", 0) == 0:
         parts.append("С вчерашним прогнозом общих часов нет.")
@@ -140,17 +149,17 @@ def template_note(analysis: dict) -> str:
         parts.append(
             f"По сравнению с вчерашним прогнозом на те же {delta['hours']} {_hours_word(delta['hours'])} ожидаемая "
             f"выработка {direction}: было {delta['sum_p50_prev']:.2f}, стало {delta['sum_p50_new']:.2f} "
-            f"({delta['delta_energy']:+.2f} доли номинала × час); часов, где оценка сдвинулась больше чем "
+            f"({delta['delta_energy']:+.2f} доли номинала × час); пар час–турбина, где оценка сдвинулась больше чем "
             f"на 0.15: {changed}."
         )
     low = analysis["low_confidence_count"]
     threshold = _threshold_text(analysis)
     if low == 0:
-        parts.append(f"Часов низкой уверенности нет ({threshold}).")
+        parts.append(f"Пар час–турбина низкой уверенности нет ({threshold}).")
     else:
         first = analysis["low_confidence_hours"][0]
-        parts.append(f"Часов низкой уверенности: {low} из {analysis['hours'] * len(analysis['turbines'])}, "
-                     f"{threshold}; первый из них {_ru_time(first['target_time'], sep=" в ")} "
+        parts.append(f"Пар час–турбина низкой уверенности: {low} из {analysis['hours'] * len(analysis['turbines'])}, "
+                     f"{threshold}; первая из них {_ru_time(first['target_time'], sep=" в ")} "
                      f"(турбина {first['turbine']}, {first['reason']}).")
     cutout = analysis.get("cutout_hours", len(analysis.get("extreme_wind_hours") or []))
     if cutout:
@@ -341,6 +350,8 @@ TOOL_FUNCTIONS = {
 
 _ISSUE_NOTE = ("issue_date это день выпуска прогноза; прогноз покрывает два следующих дня: issue_date+1 "
                "и issue_date+2. Для вопроса про конкретный день выработки нужен get_forecast_for_day.")
+_SUM_NOTE = ("Суммы p10 и p90 за период это суммы квантилей по часам, а не интервал суточной выработки; "
+             "не подавать их как «от X до Y».")
 _date_param = {"type": "string", "description": (
     f"День выпуска прогноза (issue_date) в формате ГГГГ-ММ-ДД, с {TEST_ISSUE_DATES[0]} по {TEST_ISSUE_DATES[1]}. "
     "Это НЕ день выработки: прогноз покрывает два следующих дня, issue_date+1 и issue_date+2.")}
@@ -352,7 +363,7 @@ TOOLS_SPEC = [
     {"type": "function", "function": {
         "name": "get_forecast",
         "description": ("Готовый прогноз выработки (p10/p50/p90 по часам и турбинам) и анализ одного выпуска "
-                        "целиком, 48 часов. " + _ISSUE_NOTE),
+                        "целиком, 48 часов. " + _ISSUE_NOTE + " " + _SUM_NOTE),
         "parameters": {"type": "object", "properties": {"issue_date": _date_param}, "required": ["issue_date"]},
     }},
     {"type": "function", "function": {
@@ -361,7 +372,8 @@ TOOLS_SPEC = [
                         "который этот день покрывает: сначала выпуск target_date−1, если его нет, то target_date−2. "
                         "Возвращает, из какого выпуска взят прогноз (issue_date, lead «завтра»/«послезавтра»), "
                         "часы дня и сводку по турбинам: sum_p50, sum_p10, sum_p90, max_p50 и его час, "
-                        "число часов низкой уверенности. Звать всегда, когда пользователь спрашивает про конкретный день."),
+                        "число часов низкой уверенности. Звать всегда, когда пользователь спрашивает про конкретный день. "
+                        + _SUM_NOTE),
         "parameters": {"type": "object", "properties": {"target_date": _target_param}, "required": ["target_date"]},
     }},
     {"type": "function", "function": {
@@ -394,6 +406,10 @@ SYSTEM_PROMPT = (
     "с target_date этого дня. get_forecast, get_weather и compare_runs принимают день выпуска; "
     "звать их, только если пользователь прямо говорит о выпуске или о 48 часах выпуска. "
     "В ответе всегда называй, из какого выпуска взят прогноз (дата выпуска и «на завтра»/«на послезавтра»). "
+    "Сегодня. Если пользователь говорит «сегодня/завтра/послезавтра» и не называет дату, считай сегодняшним днём "
+    f"последний выпуск {TEST_ISSUE_DATES[1]} и назови это допущение в ответе. "
+    "Суммы p10 и p90 за период это суммы квантилей по часам, а не интервал суточной выработки; не подавай их "
+    "как «от X до Y». "
     "Любое число из инструментов округляй до двух знаков после запятой (например, -0.075 пиши как -0.08; 0.6 как 0.60); количества часов и дней — целыми числами. Называй единицы: p10/p50/p90 — доля номинальной мощности "
     "(от 0 до 1); суммы за период — в единицах «доля номинала × час». Давай числа по каждой турбине. "
     "Пиши без markdown-разметки: без звёздочек, решёток и заголовков; списки допустимы только "
@@ -410,12 +426,15 @@ def ask(question: str, history: list | None = None) -> str:
         return NO_KEY_TEXT
     if not question or not str(question).strip():
         return "Вопрос пустой. Спросите, например: «Сколько выдаст турбина 1 по прогнозу за 2026-02-05?»"
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for item in history or []:
-        if isinstance(item, dict) and item.get("role") in ("user", "assistant") and item.get("content"):
-            messages.append({"role": item["role"], "content": str(item["content"])})
-    messages.append({"role": "user", "content": str(question).strip()})
     try:
+        # history любого вида (None, число, строка, список с мусором) не роняет чат: берём только
+        # словари {role: user|assistant, content}, остальное пропускаем.
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        items = history if isinstance(history, (list, tuple)) else []
+        for item in items:
+            if isinstance(item, dict) and item.get("role") in ("user", "assistant") and item.get("content"):
+                messages.append({"role": item["role"], "content": str(item["content"])})
+        messages.append({"role": "user", "content": str(question).strip()})
         client = _client(CHAT_TIMEOUT)
         for _ in range(MAX_TOOL_ROUNDS):
             response = client.chat.completions.create(

@@ -211,6 +211,7 @@ def status():
         "period": list(TEST_ISSUE_DATES),
         "forecasts_done": sorted(p.stem.replace("forecast_", "") for p in FORECASTS_DIR.glob("forecast_*.csv")),
         "model_info": model_info(),
+        "hero_video_url": os.environ.get("HERO_VIDEO_URL", "").strip(),  # ролик шапки, файл вне репозитория
     }
 
 
@@ -351,7 +352,7 @@ def validation():
     report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
     # Независимый тест на другом месяце (обучение до него): model/artifacts_dec2025/metrics.json, если есть.
     extra = {}
-    for name in ("artifacts_dec2025",):
+    for name in ("artifacts_dec2025", "artifacts_strict"):
         extra_path = Path("model") / name / "metrics.json"
         if extra_path.exists():
             try:

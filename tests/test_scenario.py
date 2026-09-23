@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 os.environ["WEATHER_OFFLINE"] = "1"          # до импортов проекта: погода только из data/weather_cache
+os.environ["OPENAI_API_KEY"] = ""           # тест не ходит в OpenAI; пустое значение load_dotenv не перезапишет
 os.chdir(ROOT)                                # пути проекта относительные от корня репозитория
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))

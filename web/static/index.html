@@ -58,6 +58,31 @@
   .hidden { display: none !important; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+  /* Hero над инструментом */
+  .hero {
+    position: relative; height: 70vh; min-height: 360px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    background: linear-gradient(160deg, #14201B 0%, #1E2E27 100%); color: #fff;
+  }
+  .hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .hero-shade { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); display: none; }
+  .hero.has-video .hero-shade { display: block; }
+  .hero-content { position: relative; z-index: 1; padding: 0 var(--page-pad); max-width: 900px; }
+  .hero-title { font-size: 56px; line-height: 62px; font-weight: 500; letter-spacing: -0.02em; }
+  .hero-subtitle { font-size: 17px; line-height: 26px; color: rgba(255, 255, 255, .82); margin-top: 16px; }
+  .hero-cta {
+    display: inline-flex; align-items: center; height: 40px; padding: 0 16px; margin-top: 32px;
+    border-radius: var(--radius); background: var(--accent); color: #fff; text-decoration: none;
+    font-size: 14px; font-weight: 500; transition: background-color var(--t);
+  }
+  .hero-cta:hover { background: var(--accent-dark); color: #fff; }
+  .hero-note { font-size: 12px; line-height: 18px; color: rgba(255, 255, 255, .6); margin-top: 24px; }
+  @media (max-width: 640px) {
+    .hero { height: 50vh; min-height: 300px; }
+    .hero-title { font-size: 34px; line-height: 40px; }
+    .hero-subtitle { font-size: 15px; line-height: 22px; }
+  }
+
   /* Шапка: название слева, дата и основная кнопка справа, под ней тонкий разделитель */
   .topbar {
     display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 24px;
@@ -163,19 +188,21 @@
   .fact ul { margin: 0; padding-left: 18px; }
 
   /* Графики */
-  .chart { margin-top: 16px; position: relative; }
+  .chart { margin-top: 16px; position: relative; background: #14201B; border-radius: var(--radius); padding: 12px 16px 8px; overflow-x: auto; }
+  .chart h3 { color: #E6ECE8; }
+  .p50-line { filter: drop-shadow(0 0 4px rgba(127, 209, 168, .6)); }
   .chart-tip {
     position: absolute; z-index: 2; pointer-events: none; min-width: 150px;
-    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px;
-    font-size: 12px; line-height: 18px;
+    background: #1E2E27; border: 1px solid #2A3A32; border-radius: var(--radius); padding: 12px;
+    font-size: 12px; line-height: 18px; color: #E6ECE8;
   }
   .tip-time { font-family: var(--mono); font-weight: 500; margin-bottom: 4px; }
-  .tip-row { display: flex; justify-content: space-between; gap: 16px; font-family: var(--mono); color: var(--muted); }
-  .tip-row.tip-main { color: var(--text); font-weight: 500; }
-  .tip-wind { margin-top: 4px; color: var(--muted); }
+  .tip-row { display: flex; justify-content: space-between; gap: 16px; font-family: var(--mono); color: #B8C4BE; }
+  .tip-row.tip-main { color: #7FD1A8; font-weight: 500; }
+  .tip-wind { margin-top: 4px; color: #B8C4BE; }
   .hover-area { cursor: crosshair; }
   .chart h3 { margin: 8px 0 4px; }
-  .chart svg { width: 100%; height: auto; display: block; font-family: var(--mono); }
+  .chart svg { display: block; font-family: var(--mono); }
   .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12px; line-height: 18px; color: var(--muted); margin-top: 4px; }
   .swatch { display: inline-block; width: 14px; height: 10px; vertical-align: 0; margin-right: 6px; }
   .validation-brief { font-size: 13px; line-height: 20px; color: var(--muted); margin-top: 8px; }
@@ -216,6 +243,7 @@
   .about p:first-of-type { margin-top: 0; }
   .about strong { font-weight: 600; }
   .model-info { margin-top: var(--section-gap); padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; line-height: 18px; color: var(--muted); }
+  .retry { margin-top: 8px; }
   .hints { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
   .hints button { white-space: normal; height: auto; min-height: 32px; padding: 6px 12px; text-align: left; }
   .chat-log { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -258,12 +286,23 @@
 </style>
 </head>
 <body>
-<main>
+<!-- Hero: видео из status.hero_video_url или тёмный фон, если видео нет -->
+<div class="hero" id="hero">
+  <video id="hero-video" class="hero-video hidden" autoplay muted loop playsinline></video>
+  <div class="hero-shade"></div>
+  <div class="hero-content">
+    <div class="hero-title">Прогноз выработки ВЭС</div>
+    <div class="hero-subtitle">Агент на архивных прогнозах погоды · две турбины · горизонт 48 часов</div>
+    <a href="#tool" id="hero-cta" class="hero-cta">К прогнозу</a>
+    <div class="hero-note">Самрук-Казына · HackAlem AI 2026</div>
+  </div>
+</div>
+
+<main id="tool">
 
   <!-- Шапка: название слева, дата выпуска и основная кнопка справа -->
   <header class="topbar">
     <div>
-      <h1>Прогноз выработки</h1>
       <div class="subtitle">2 турбины · горизонт 48 часов</div>
     </div>
     <div class="controls">
@@ -290,6 +329,7 @@
       <div id="progress" class="progress hidden"><div id="progress-bar"></div></div>
     </div>
     <div id="run-error" class="error hidden"></div>
+    <button id="retry-btn" type="button" class="hidden retry">Повторить</button>
   </div>
 
   <!-- Карточка с главными числами проверки; скрыта, пока метрик нет -->
@@ -311,11 +351,11 @@
 
     <h3>График по турбинам</h3>
     <div class="legend">
-      <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>p50: медианный прогноз</span>
-      <span><span class="swatch" style="background:var(--band);opacity:.18"></span>p10–p90: оценочный диапазон</span>
-      <span><span class="swatch" style="background:var(--low);width:7px;height:7px;border-radius:50%"></span>низкая уверенность</span>
-      <span><span class="swatch" style="background:#5E6B64;height:1px;vertical-align:4px"></span>ветер на 100 м, м/с (правая ось)</span>
-      <span><span class="swatch" style="background:#F1F3F0;border:1px solid var(--line)"></span>ночь, 18:00–06:00</span>
+      <span><span class="swatch" style="background:#7FD1A8;height:3px;vertical-align:3px"></span>p50: медианный прогноз</span>
+      <span><span class="swatch" style="background:rgba(127,209,168,.35);border:1px solid #14201B"></span>p10–p90: оценочный диапазон</span>
+      <span><span class="swatch" style="background:#F2C27B;width:7px;height:7px;border-radius:50%"></span>низкая уверенность</span>
+      <span><span class="swatch" style="background:#B8C4BE;height:1px;vertical-align:4px"></span>ветер на 100 м, м/с (правая ось)</span>
+      <span><span class="swatch" style="background:#0F1915"></span>ночь, 18:00–06:00</span>
     </div>
     <div id="validation-brief" class="validation-brief hidden"></div>
     <div id="charts"></div>
@@ -325,11 +365,11 @@
     <h3>Что изменилось при пересчёте</h3>
     <div class="muted small">Сутки после даты выпуска прогнозировались дважды: вчера (за 48 часов) и сегодня (за 24 часа). Здесь видно, насколько сегодняшний прогноз поправил вчерашний.</div>
     <div class="legend">
-      <span><span class="swatch" style="border-top:2px dashed #8a94a3;height:0;vertical-align:3px"></span>вчерашний выпуск (упреждение 48 ч)</span>
-      <span><span class="swatch" style="background:var(--band);height:3px;vertical-align:3px"></span>сегодняшний выпуск (упреждение 24 ч)</span>
-      <span><span class="swatch" style="background:#f08c00;opacity:.25"></span>пересчитано больше чем на 0.15</span>
-      <span><span class="swatch" style="background:rgba(39,102,83,.18)"></span>сегодня выше</span>
-      <span><span class="swatch" style="background:#FFF3D6;border:1px solid var(--line)"></span>сегодня ниже</span>
+      <span><span class="swatch" style="border-top:2px dashed #B8C4BE;height:0;vertical-align:3px"></span>вчерашний выпуск (упреждение 48 ч)</span>
+      <span><span class="swatch" style="background:#7FD1A8;height:3px;vertical-align:3px"></span>сегодняшний выпуск (упреждение 24 ч)</span>
+      <span><span class="swatch" style="background:rgba(242,194,123,.45)"></span>пересчитано больше чем на 0.15</span>
+      <span><span class="swatch" style="background:rgba(127,209,168,.45)"></span>сегодня выше</span>
+      <span><span class="swatch" style="background:rgba(242,194,123,.45)"></span>сегодня ниже</span>
     </div>
     <div id="changes"></div>
     </div>
@@ -393,7 +433,7 @@
     <h2>О проекте</h2>
     <p><strong>Задача.</strong> Ветростанция должна каждый день заранее сообщать почасовую выработку двух турбин на завтра и послезавтра: под прогноз планируется энергосистема, а расхождение с фактом оплачивается на балансирующем рынке. Организаторы выдали три года 10-минутных замеров и попросили систему, которая сама берёт прогноз погоды, известный на момент выпуска, считает выработку и повторяет расчёт каждый день февраля 2026.</p>
     <p><strong>Метод.</strong> Модель учится на связке «прогноз погоды на этот час → фактическая выработка», а не на измеренном ветре, и выдаёт на каждый час три оценки p10, p50, p90. Агент на день выпуска получает прогноз с упреждением 24 и 48 часов, считает 48 часов по каждой турбине, сравнивает с прогнозом предыдущего дня, отмечает часы повышенной неопределённости и ведёт журнал.</p>
-    <p><strong>Проверка.</strong> Январь 2026 в обучение не входил: MAE 0,144 доли номинала против 0,158 у кривой «ветер → мощность» и 0,365 у правила «завтра как сегодня». Ретроспективная проверка на декабре 2025 с отсечкой обучения 30 ноября: 0,196 против 0,206. Февральских фактов у нас нет, поэтому качество показано на прошлых месяцах.</p>
+    <p><strong>Проверка.</strong> Январь 2026 в обучение не входил: MAE 0.144 доли номинала против 0.158 у кривой «ветер → мощность» и 0.365 у правила «завтра как сегодня». Ретроспективная проверка на декабре 2025 с отсечкой обучения 30 ноября: 0.196 против 0.206. Февральских фактов у нас нет, поэтому качество показано на прошлых месяцах.</p>
   </section>
 
   <!-- Сведения о модели из status.model_info; скрыто, если их нет -->
@@ -590,10 +630,13 @@ function validateDate(value) {
 }
 
 // ---------- запуск на один день ----------
+let failedRunDate = null;   // дата неудавшегося запуска для кнопки «Повторить»
+
 async function runOneDay() {
   const date = $("issue-date").value;
   const problem = validateDate(date);
   showError($("run-error"), null);
+  show($("retry-btn"), false);
   if (problem) { showError($("run-error"), problem); return; }
 
   setBusy(true, "Агент работает…");
@@ -601,7 +644,11 @@ async function runOneDay() {
     const result = await api("/api/run?issue_date=" + encodeURIComponent(date), { method: "POST" });
     renderResult(result, true);
   } catch (e) {
+    // Старый результат не показываем, чтобы его не приняли за прогноз на эту дату
+    show($("result-section"), false);
     showError($("run-error"), "Прогноз на " + formatDay(date) + " не получен: " + e.message);
+    failedRunDate = date;
+    show($("retry-btn"), true);
   } finally {
     setBusy(false);
     loadJournal();
@@ -740,7 +787,7 @@ function renderFacts(analysis) {
     const items = [`Средняя ошибка (MAE): <b>${num(err.mae)}</b>`];
     if (err.rmse !== undefined) items.push(`RMSE: ${num(err.rmse)}`);
     if (err.bias !== undefined) items.push(`Смещение: ${signed(err.bias)}`);
-    if (err.coverage_p10_p90 !== undefined) items.push(`Факт внутри коридора: ${Math.round(Number(err.coverage_p10_p90) * 100)}% часов`);
+    if (err.coverage_p10_p90 !== undefined) items.push(`Факт внутри коридора: ${(Number(err.coverage_p10_p90) * 100).toFixed(1)} % часов`);
     cards.push([`Ошибка вчерашнего прогноза${err.day ? " за " + formatDay(err.day) : ""}`, items]);
   }
 
@@ -763,36 +810,68 @@ function renderFacts(analysis) {
 // ---------- графики SVG ----------
 function renderCharts(rows) {
   const box = $("charts");
+  lastChartRows = rows;
   box.innerHTML = "";
   const turbines = [...new Set(rows.map((r) => String(r.turbine)))].sort();
   if (!turbines.length) { box.innerHTML = '<p class="muted">Строк прогноза нет.</p>'; return; }
+  const W = chartWidth(box);
   for (const t of turbines) {
     const data = rows.filter((r) => String(r.turbine) === t)
       .sort((a, b) => String(a.target_time).localeCompare(String(b.target_time)));
     const div = document.createElement("div");
     div.className = "chart";
-    div.innerHTML = `<h3>Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data) + '<div class="chart-tip hidden"></div>';
+    const geom = chartGeometry(W);
+    div.innerHTML = `<h3>Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data, geom) + '<div class="chart-tip hidden"></div>';
     box.appendChild(div);
-    attachChartHover(div, data);
+    attachChartHover(div, data, geom);
   }
 }
 
-// Геометрия графика турбины в единицах viewBox: одна для построения и для наведения.
-const CHART = { W: 1000, H: 300, left: 46, right: 48, top: 22, bottom: 40 };
-const WIND_MAX = 20;   // правая ось ветра, м/с; выше обрезается по верху
+// Тёмная тема графиков
+const DARK = {
+  bg: "#14201B", text: "#E6ECE8", grid: "#2A3A32", night: "#0F1915", accent: "#7FD1A8",
+  wind: "#B8C4BE", amber: "#F2C27B",
+};
+const WIND_MAX = 20;       // правая ось ветра, м/с; выше обрезается по верху
+const CHART_H = 320;       // высота графика в пикселях
+let lastChartRows = [];    // для перерисовки при смене ширины окна
+let lastChangesPairs = null;
+let chartSeq = 0;          // уникальные id градиентов
 
-function buildChartSvg(data) {
-  const { W, H, left, right, top, bottom } = CHART;
+// Ширина рисунка = ширина области графиков минус внутренние отступы карточки: 1 единица SVG = 1 пиксель.
+// На узком экране рисунок не сужается меньше 760 px: карточка прокручивается по горизонтали.
+const CHART_MIN_W = 760;
+function chartWidth(box) {
+  const w = Math.round((box.clientWidth || 0) - 32);
+  return w > 200 ? Math.max(CHART_MIN_W, w) : 1000;
+}
+function chartGeometry(W) {
+  return { W, H: CHART_H, left: 40, right: 40, top: 28, bottom: 44 };
+}
+// Шаг подписей по времени: каждые 6 часов, на узком экране реже, чтобы подписи не налезали
+function labelEvery(plotW, n) {
+  return 6;   // при ширине от 760 px подписи через 6 часов помещаются всегда
+}
+
+function buildChartSvg(data, geom) {
+  const { W, H, left, right, top, bottom } = geom;
   const plotW = W - left - right, plotH = H - top - bottom;
   const n = data.length;
   const x = (i) => left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
   const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
   const y = (v) => top + (1 - clamp(v)) * plotH;
-
-  const parts = [];
   const step = n > 1 ? plotW / (n - 1) : plotW;
   const hourOf = (r) => { const m = /T(\d{2}):/.exec(String(r.target_time || "")); return m ? Number(m[1]) : null; };
-  // Ночные часы 00–06 и 18–24 фоном, соседние часы склеиваются в одну полосу
+  const dayOf = (r) => String(r.target_time || "").slice(0, 10);
+  const gradId = "p50grad-" + (++chartSeq);
+  const T = `font-size="11" fill="${DARK.text}"`;
+
+  const parts = [];
+  parts.push(`<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="${DARK.accent}" stop-opacity="0.30"/><stop offset="1" stop-color="${DARK.accent}" stop-opacity="0"/>
+  </linearGradient></defs>`);
+  parts.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="${DARK.bg}"/>`);
+  // Ночные часы 00–06 и 18–24 чуть темнее фона, соседние часы склеиваются
   let nightStart = null;
   data.forEach((r, i) => {
     const h = hourOf(r);
@@ -801,63 +880,87 @@ function buildChartSvg(data) {
     if ((!night || i === n - 1) && nightStart !== null) {
       const endIdx = night ? i : i - 1;
       const x0 = Math.max(left, x(nightStart) - step / 2), x1 = Math.min(W - right, x(endIdx) + step / 2);
-      parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="#F1F3F0"/>`);
+      parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="${DARK.night}"/>`);
       nightStart = null;
     }
   });
-  // Сетка и подписи оси Y
+  // Сетка и левая ось
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
-    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#E7EBE8" stroke-width="1"/>`);
-    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5E6B64">${v}</text>`);
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${DARK.grid}" stroke-width="1"/>`);
+    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" ${T}>${v}</text>`);
   }
-  // Граница суток: тонкая вертикаль и дата сверху
+  // Граница суток и дата сверху
   data.forEach((r, i) => {
     if (i === 0 || hourOf(r) !== 0) return;
     const bx = (x(i) - step / 2).toFixed(1);
-    parts.push(`<line x1="${bx}" x2="${bx}" y1="${top}" y2="${top + plotH}" stroke="#DCE2DD" stroke-width="1" vector-effect="non-scaling-stroke"/>`);
-    parts.push(`<text x="${(Number(bx) + 6).toFixed(1)}" y="${top - 8}" text-anchor="start" font-size="11" fill="#5E6B64">${formatDay(r.target_time).slice(0, 5)}</text>`);
+    parts.push(`<line x1="${bx}" x2="${bx}" y1="${top}" y2="${top + plotH}" stroke="${DARK.grid}" stroke-width="1"/>`);
+    parts.push(`<text x="${(Number(bx) + 6).toFixed(1)}" y="${top - 10}" text-anchor="start" ${T}>${formatDay(r.target_time).slice(0, 5)}</text>`);
   });
-  // Правая ось: прогноз ветра на 100 м, 0…20 м/с
+  // Правая ось ветра
   const yWind = (v) => top + (1 - Math.max(0, Math.min(WIND_MAX, Number(v) || 0)) / WIND_MAX) * plotH;
   for (const v of [0, 5, 10, 15, 20]) {
-    parts.push(`<text x="${W - right + 8}" y="${yWind(v) + 4}" text-anchor="start" font-size="11" fill="#5E6B64">${v}</text>`);
+    parts.push(`<text x="${W - right + 8}" y="${yWind(v) + 4}" text-anchor="start" ${T}>${v}</text>`);
   }
-  parts.push(`<text x="${W - 4}" y="${top - 8}" text-anchor="end" font-size="11" fill="#5E6B64">ветер, м/с</text>`);
-  // Подписи оси X каждые 6 часов
+  parts.push(`<text x="${W - 2}" y="${top - 10}" text-anchor="end" ${T}>ветер, м/с</text>`);
+  // Подписи времени
+  const every = labelEvery(plotW, n);
   data.forEach((r, i) => {
-    if (i % 6 !== 0 && i !== n - 1) return;
-    if (i === n - 1 && i % 6 !== 0) return;
-    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="11" fill="#5E6B64">${formatTime(r.target_time, false)}</text>`);
+    if (i % every !== 0) return;
+    parts.push(`<text x="${x(i).toFixed(1)}" y="${H - 14}" text-anchor="middle" ${T}>${formatTime(r.target_time, false)}</text>`);
   });
-  // Коридор p10–p90
   if (n) {
+    // Коридор p10–p90
     const upper = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p90).toFixed(1)}`);
     const lower = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p10).toFixed(1)}`).reverse();
-    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="#276653" fill-opacity="0.18" stroke="none"/>`);
-    // Лёгкая заливка под p50
+    parts.push(`<polygon points="${upper.concat(lower).join(" ")}" fill="${DARK.accent}" fill-opacity="0.14" stroke="none"/>`);
+    // Градиентная заливка под p50
     const base = y(0).toFixed(1);
-    const underP50 = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`);
-    parts.push(`<polygon points="${x(0).toFixed(1)},${base} ${underP50.join(" ")} ${x(n - 1).toFixed(1)},${base}" fill="#276653" fill-opacity="0.08" stroke="none"/>`);
-    // Ветер на 100 м по правой оси: тонкая вторичная линия под p50
-    const windPoints = data.filter((r) => Number.isFinite(Number(r.ws100_forecast)) && r.ws100_forecast !== null)
-      .map((r) => `${x(data.indexOf(r)).toFixed(1)},${yWind(r.ws100_forecast).toFixed(1)}`).join(" ");
-    if (windPoints) parts.push(`<polyline points="${windPoints}" fill="none" stroke="#5E6B64" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`);
-    // Линия p50
-    const line = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`).join(" ");
-    parts.push(`<polyline points="${line}" fill="none" stroke="#276653" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`);
-    // Точки низкой уверенности
+    const p50pts = data.map((r, i) => `${x(i).toFixed(1)},${y(r.p50).toFixed(1)}`);
+    parts.push(`<polygon points="${x(0).toFixed(1)},${base} ${p50pts.join(" ")} ${x(n - 1).toFixed(1)},${base}" fill="url(#${gradId})" stroke="none"/>`);
+    // Ветер на 100 м тонкой линией
+    const windPoints = data.map((r, i) => (r.ws100_forecast === null || r.ws100_forecast === undefined || !Number.isFinite(Number(r.ws100_forecast)))
+      ? null : `${x(i).toFixed(1)},${yWind(r.ws100_forecast).toFixed(1)}`).filter(Boolean).join(" ");
+    if (windPoints) parts.push(`<polyline points="${windPoints}" fill="none" stroke="${DARK.wind}" stroke-width="1" stroke-linejoin="round"/>`);
+    // Линия p50 — главная, со свечением
+    parts.push(`<polyline class="p50-line" points="${p50pts.join(" ")}" fill="none" stroke="${DARK.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`);
+    // Низкая уверенность — янтарные точки
     data.forEach((r, i) => {
       if (r.confidence === "low") {
-        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="3.5" fill="#8A5A16"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
+        parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(r.p50).toFixed(1)}" r="3.5" fill="${DARK.amber}"><title>${formatTime(r.target_time)}: низкая уверенность${r.note ? " — " + escapeHtml(r.note) : ""}</title></circle>`);
       }
     });
+    // Максимум и минимум p50 по каждым суткам: точка и число, подпись над максимумом и под минимумом
+    const days = [...new Set(data.map(dayOf))];
+    for (const d of days) {
+      const idx = data.map((r, i) => i).filter((i) => dayOf(data[i]) === d);
+      if (!idx.length) continue;
+      let iMax = idx[0], iMin = idx[0];
+      for (const i of idx) {
+        if (Number(data[i].p50) > Number(data[iMax].p50)) iMax = i;
+        if (Number(data[i].p50) < Number(data[iMin].p50)) iMin = i;
+      }
+      const mark = (i, above) => {
+        const cx = x(i), cy = y(data[i].p50);
+        parts.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="${DARK.text}"/>`);
+        // У верхнего края над точкой места нет: подпись справа ниже линии, чтобы не налезать на дату
+        if (above && cy - 9 < top + 4) {
+          const toLeft = cx + 60 > W - right;
+          parts.push(`<text x="${(toLeft ? cx - 8 : cx + 8).toFixed(1)}" y="${(cy + 18).toFixed(1)}" text-anchor="${toLeft ? "end" : "start"}" ${T} font-weight="500">${num(data[i].p50)}</text>`);
+          return;
+        }
+        const tx = Math.min(Math.max(cx, left + 18), W - right - 18);
+        const ty = above ? cy - 9 : Math.min(cy + 17, top + plotH + 14);
+        parts.push(`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" ${T} font-weight="500">${num(data[i].p50)}</text>`);
+      };
+      mark(iMax, true);
+      if (iMin !== iMax) mark(iMin, false);
+    }
   }
-  // Оси
-  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#DCE2DD"/>`);
-  // Направляющая наведения и прозрачный слой, который ловит мышь и касания
-  parts.push(`<line class="hover-guide" x1="0" x2="0" y1="${top}" y2="${top + plotH}" stroke="#5E6B64" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="${DARK.grid}"/>`);
+  // Направляющая наведения и прозрачный слой для мыши и касаний
+  parts.push(`<line class="hover-guide" x1="0" x2="0" y1="${top}" y2="${top + plotH}" stroke="${DARK.wind}" stroke-width="1" visibility="hidden"/>`);
   parts.push(`<rect class="hover-area" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/>`);
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График прогноза на 48 часов">${parts.join("")}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="График прогноза на 48 часов">${parts.join("")}</svg>`;
 }
 
 // ---------- что изменилось при пересчёте ----------
@@ -882,6 +985,7 @@ function previousDay(date) {
 async function renderChanges(date, rows) {
   const box = $("changes");
   const requestId = ++changesRequestId;
+  lastChangesPairs = null;
   const noPrevious = '<p class="muted">Вчерашнего выпуска нет: сравнить не с чем.</p>';
   if (!date || validateDate(date) || date <= PERIOD_START) { box.innerHTML = noPrevious; return; }
   box.innerHTML = '<p class="muted">Загружаю вчерашний выпуск…</p>';
@@ -906,35 +1010,44 @@ async function renderChanges(date, rows) {
     .filter((p) => Number.isFinite(p.today) && Number.isFinite(p.yesterday));
   if (!pairs.length) { box.innerHTML = noPrevious; return; }
 
+  lastChangesPairs = pairs;
+  box.innerHTML = changesHtml(pairs, box);
+}
+
+function changesHtml(pairs, box) {
+  const W = chartWidth(box);
   const turbines = [...new Set(pairs.map((p) => p.turbine))].sort();
   let html = "";
   for (const t of turbines) {
     const data = pairs.filter((p) => p.turbine === t).sort((a, b) => String(a.target_time).localeCompare(String(b.target_time)));
-    html += `<div class="chart"><h3>Турбина ${escapeHtml(t)}</h3>${buildChangesSvg(data)}</div>`;
+    html += `<div class="chart"><h3>Турбина ${escapeHtml(t)}</h3>${buildChangesSvg(data, chartGeometry(W))}</div>`;
   }
   const changed = pairs.filter((p) => Math.abs(p.today - p.yesterday) > CHANGE_THRESHOLD).length;
   const before = pairs.reduce((sum, p) => sum + p.yesterday, 0);
   const after = pairs.reduce((sum, p) => sum + p.today, 0);
   const delta = after - before;
   html += `<p>Пересчитано ${changed} ${hoursWord(changed)} из ${pairs.length}, сумма p50 за сутки изменилась на ${(delta > 0 ? "+" : "") + delta.toFixed(2)} (было ${before.toFixed(2)}, стало ${after.toFixed(2)})</p>`;
-  box.innerHTML = html;
+  return html;
 }
 
 // Та же геометрия, что у графиков выше: две линии p50 и полосы на часах с большим пересчётом.
-function buildChangesSvg(data) {
-  const W = 1000, H = 300;
-  const left = 46, right = 16, top = 12, bottom = 40;
+function buildChangesSvg(data, geom) {
+  const { W, H, left, right, top, bottom } = geom;
   const plotW = W - left - right, plotH = H - top - bottom;
   const n = data.length;
   const x = (i) => left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
   const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
   const y = (v) => top + (1 - clamp(v)) * plotH;
   const step = n > 1 ? plotW / (n - 1) : plotW;
+  const T = `font-size="11" fill="${DARK.text}"`;
 
-  const parts = [];
-  // Область между вчерашней и сегодняшней линией: по отрезкам между соседними часами,
-  // с точкой пересечения там, где линии меняют порядок. Выше вчера — зелёный, ниже — янтарный.
-  const UP = 'fill="#276653" fill-opacity="0.18"', DOWN = 'fill="#FFF3D6"';
+  const parts = [`<rect x="0" y="0" width="${W}" height="${H}" fill="${DARK.bg}"/>`];
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${DARK.grid}" stroke-width="1"/>`);
+    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" ${T}>${v}</text>`);
+  }
+  // Область между вчерашней и сегодняшней линией по отрезкам, с точкой пересечения
+  const UP = `fill="${DARK.accent}" fill-opacity="0.22"`, DOWN = `fill="${DARK.amber}" fill-opacity="0.22"`;
   const pt = (px, py) => `${px.toFixed(1)},${py.toFixed(1)}`;
   for (let i = 0; i + 1 < n; i++) {
     const t0 = clamp(data[i].today), t1 = clamp(data[i + 1].today);
@@ -943,45 +1056,41 @@ function buildChangesSvg(data) {
     const xa = x(i), xb = x(i + 1);
     if (d0 * d1 >= 0) {
       if (d0 === 0 && d1 === 0) continue;
-      const fill = d0 + d1 > 0 ? UP : DOWN;
-      parts.push(`<polygon points="${pt(xa, y(t0))} ${pt(xb, y(t1))} ${pt(xb, y(y1))} ${pt(xa, y(y0))}" ${fill} stroke="none"/>`);
+      parts.push(`<polygon points="${pt(xa, y(t0))} ${pt(xb, y(t1))} ${pt(xb, y(y1))} ${pt(xa, y(y0))}" ${d0 + d1 > 0 ? UP : DOWN} stroke="none"/>`);
     } else {
-      const k = d0 / (d0 - d1);                    // доля отрезка до пересечения
+      const k = d0 / (d0 - d1);
       const xc = xa + k * (xb - xa), vc = t0 + k * (t1 - t0);
       parts.push(`<polygon points="${pt(xa, y(t0))} ${pt(xc, y(vc))} ${pt(xa, y(y0))}" ${d0 > 0 ? UP : DOWN} stroke="none"/>`);
       parts.push(`<polygon points="${pt(xc, y(vc))} ${pt(xb, y(t1))} ${pt(xb, y(y1))}" ${d1 > 0 ? UP : DOWN} stroke="none"/>`);
     }
   }
-  // Полосы пересчёта на всю высоту — поверх заливки
+  // Полосы пересчёта поверх заливки
   data.forEach((p, i) => {
     if (Math.abs(p.today - p.yesterday) <= CHANGE_THRESHOLD) return;
     const x0 = Math.max(left, x(i) - step / 2), x1 = Math.min(W - right, x(i) + step / 2);
-    parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="#f08c00" fill-opacity="0.18"><title>${formatTime(p.target_time)}: было ${num(p.yesterday)}, стало ${num(p.today)}</title></rect>`);
+    parts.push(`<rect x="${x0.toFixed(1)}" y="${top}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="${DARK.amber}" fill-opacity="0.18"><title>${formatTime(p.target_time)}: было ${num(p.yesterday)}, стало ${num(p.today)}</title></rect>`);
   });
-  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
-    parts.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#E7EBE8" stroke-width="1"/>`);
-    parts.push(`<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5E6B64">${v}</text>`);
-  }
+  const every = labelEvery(plotW, n);
   data.forEach((p, i) => {
-    if (i % 6 !== 0) return;
-    parts.push(`<text x="${x(i)}" y="${H - 16}" text-anchor="middle" font-size="11" fill="#5E6B64">${formatTime(p.target_time, false)}</text>`);
+    if (i % every !== 0) return;
+    parts.push(`<text x="${x(i).toFixed(1)}" y="${H - 14}" text-anchor="middle" ${T}>${formatTime(p.target_time, false)}</text>`);
   });
   const line = (field) => data.map((p, i) => `${x(i).toFixed(1)},${y(p[field]).toFixed(1)}`).join(" ");
-  parts.push(`<polyline points="${line("yesterday")}" fill="none" stroke="#8a94a3" stroke-width="2" stroke-dasharray="6 4"/>`);
-  parts.push(`<polyline points="${line("today")}" fill="none" stroke="#276653" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`);
-  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="#DCE2DD"/>`);
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Сравнение со вчерашним выпуском">${parts.join("")}</svg>`;
+  parts.push(`<polyline points="${line("yesterday")}" fill="none" stroke="${DARK.wind}" stroke-width="2" stroke-dasharray="6 4"/>`);
+  parts.push(`<polyline class="p50-line" points="${line("today")}" fill="none" stroke="${DARK.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`);
+  parts.push(`<line x1="${left}" x2="${W - right}" y1="${top + plotH}" y2="${top + plotH}" stroke="${DARK.grid}"/>`);
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Сравнение со вчерашним выпуском">${parts.join("")}</svg>`;
 }
 
 // Наведение: ближайший час под курсором или пальцем, направляющая и подсказка внутри контейнера графика.
-function attachChartHover(container, data) {
+function attachChartHover(container, data, geom) {
   const svg = container.querySelector("svg");
   const area = svg && svg.querySelector(".hover-area");
   const guide = svg && svg.querySelector(".hover-guide");
   const tip = container.querySelector(".chart-tip");
   const n = data.length;
   if (!area || !guide || !tip || !n) return;
-  const { W, left, right } = CHART;
+  const { W, left, right } = geom;
   const plotW = W - left - right;
   const xOf = (i) => left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
 
@@ -1003,11 +1112,12 @@ function attachChartHover(container, data) {
     show(tip, true);
     // Координаты относительно контейнера; у правого края подсказка переворачивается влево
     const box = container.getBoundingClientRect();
-    const px = rect.left - box.left + gx * scale;
+    const sl = container.scrollLeft;
+    const px = rect.left - box.left + sl + gx * scale;
     const tipW = tip.offsetWidth, tipH = tip.offsetHeight;
     let tx = px + 12;
-    if (tx + tipW > box.width) tx = px - 12 - tipW;
-    tx = Math.max(0, Math.min(tx, box.width - tipW));
+    if (tx + tipW > sl + box.width) tx = px - 12 - tipW;
+    tx = Math.max(sl, Math.min(tx, sl + box.width - tipW));
     const ty = Math.max(0, Math.min(rect.top - box.top + 8, box.height - tipH));
     tip.style.left = Math.round(tx) + "px";
     tip.style.top = Math.round(ty) + "px";
@@ -1116,7 +1226,7 @@ function formatMonth(value) {
 
 function percent(value) {
   const n = Number(value);
-  return value === null || value === undefined || !Number.isFinite(n) ? "—" : (n * 100).toFixed(1) + "%";
+  return value === null || value === undefined || !Number.isFinite(n) ? "—" : (n * 100).toFixed(1) + " %";
 }
 
 function countOrDash(value) {
@@ -1151,7 +1261,7 @@ function validationTable(v) {
     <thead><tr><th rowspan="2">Горизонт</th>${groupHead}</tr><tr>${subHead}</tr></thead>
     <tbody>${body}</tbody></table></div>
     <div class="muted small" style="margin-top:6px">MAE и RMSE — средняя ошибка в долях номинала, меньше — лучше.
-      «p10–p90, %» — доля часов, где факт попал в коридор (по замыслу около 80%). «Ширина» — средняя ширина коридора.
+      «p10–p90, %» — доля часов, где факт попал в коридор (по замыслу около 80 %). «Ширина» — средняя ширина коридора.
       У persistence коридора нет.</div>`;
 }
 
@@ -1231,6 +1341,19 @@ function extraTestLine(extraMetrics) {
   return text + ".";
 }
 
+// Строгий режим доступности погоды (extra.artifacts_strict). Нет MAE модели — строки нет.
+function strictTestLine(strict) {
+  const overall = get(strict, "validation", "overall");
+  const model = Number(get(overall, "model", "mae") ?? NaN);
+  if (!Number.isFinite(model)) return "";
+  const curve = Number(get(overall, "power_curve", "mae") ?? NaN);
+  const coverage = Number(get(overall, "model", "coverage_p10_p90") ?? NaN);
+  let text = `Строгий режим доступности погоды (упреждение 48/72 ч): MAE модели ${num(model)}`;
+  if (Number.isFinite(curve)) text += `, кривая ${num(curve)}`;
+  if (Number.isFinite(coverage)) text += `, покрытие ${(coverage * 100).toFixed(1)} %`;
+  return text;
+}
+
 function renderValidation(data) {
   const metrics = (data && data.metrics) || {};
   const v = metrics.validation || {};
@@ -1245,6 +1368,8 @@ function renderValidation(data) {
   </ul>`;
   const extraLine = extraTestLine(get(data, "extra", "artifacts_dec2025"));
   if (extraLine) html += `<p>${escapeHtml(extraLine)}</p>`;
+  const strictLine = strictTestLine(get(data, "extra", "artifacts_strict"));
+  if (strictLine) html += `<p>${escapeHtml(strictLine)}</p>`;
   const verdict = validationVerdict(v);
   if (verdict) html += `<p class="note">${verdict}</p>`;
   if (data && data.report) {
@@ -1308,6 +1433,24 @@ async function loadSavedForecast(date) {
 
 async function init() {
   initTour();
+  $("retry-btn").addEventListener("click", () => {
+    if (failedRunDate) $("issue-date").value = failedRunDate;
+    runOneDay();
+  });
+  let lastWidth = window.innerWidth, resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
+      if (lastChartRows.length) renderCharts(lastChartRows);
+      if (lastChangesPairs) $("changes").innerHTML = changesHtml(lastChangesPairs, $("changes"));
+    }, 150);
+  });
+  $("hero-cta").addEventListener("click", (e) => {
+    e.preventDefault();
+    $("tool").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   $("run-btn").addEventListener("click", runOneDay);
   $("run-all-btn").addEventListener("click", runWholePeriod);
   $("next-day-btn").addEventListener("click", runNextDay);
@@ -1334,10 +1477,38 @@ async function init() {
   const status = await loadStatus();
   const validationReady = loadValidation();
   loadJournal();
+  setupHero(status);
   await showInitialForecast(status);
   await validationReady;
   // Обучение показываем сами только при первом заходе и только после автопоказа прогноза
   if (!tourSeen()) startTour();
+}
+
+// ---------- hero ----------
+// Видео ставится только если адрес задан и пользователь не просил меньше движения; при ошибке — тёмный фон.
+function setupHero(status) {
+  const hero = $("hero"), video = $("hero-video");
+  const url = status && typeof status.hero_video_url === "string" ? status.hero_video_url.trim() : "";
+  let reduced = false;
+  try { reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { reduced = false; }
+  const fallback = () => {
+    hero.classList.remove("has-video");
+    show(video, false);
+    video.removeAttribute("src");
+  };
+  if (!url || reduced) { fallback(); return; }
+  video.addEventListener("error", fallback, { once: true });
+  video.src = url;
+  hero.classList.add("has-video");
+  show(video, true);
+  const tryPlay = () => {
+    if (!hero.classList.contains("has-video")) return;
+    const played = video.play();
+    if (played && typeof played.catch === "function") played.catch(() => { /* автозапуск может быть запрещён: остаётся первый кадр */ });
+  };
+  tryPlay();
+  // Во вкладке в фоне браузер не запускает видео — запускаем, когда страница стала видимой
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && video.paused) tryPlay(); });
 }
 
 // ---------- обучение по шагам ----------
@@ -1364,7 +1535,7 @@ function buildTourSteps() {
     el: () => (visible($("steps-block")) ? $("steps-block") : $("result-title")),
     text: () => (visible($("steps-block")) ? ribbonText : ribbonText + ". Лента появится после нажатия «Сформировать прогноз»"),
   });
-  steps.push({ el: () => document.querySelector("#charts .chart"), text: "Линия p50 и интервал p10–p90 по каждой турбине, оранжевым часы низкой уверенности" });
+  steps.push({ el: () => document.querySelector("#charts .chart"), text: "Линия p50 и интервал p10–p90 по каждой турбине, янтарным часы низкой уверенности" });
   steps.push({ el: () => $("changes-panel"), text: "Так виден пересчёт: вчерашний прогноз с упреждением 48 ч против сегодняшнего с 24 ч" });
   steps.push({
     el: () => (visible($("chat-section")) ? $("chat-section") : null),
