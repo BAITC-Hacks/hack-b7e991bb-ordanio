@@ -12,6 +12,7 @@
 
 ```
 git clone https://github.com/BAITC-Hacks/hack-b7e991bb-ordanio.git repo
+cd repo
 git log --oneline -1
 8e30e31 Примеры из финального прогона; README: возможности страницы и проверенное окружение
 ```
@@ -131,13 +132,40 @@ WEATHER_STRICT=0 WEATHER_OFFLINE=1 .venv/bin/python -m agent.run --date 2026-02-
 (сравнительный запуск заменил файл 05.02 в общей папке output/ этой временной копии; основной набор
 после него не восстанавливался, дальнейшие шаги протокола от output/ не зависят)
 
-WEATHER_OFFLINE=1 .venv/bin/python -m model.train --validation-month 2025-12 --artifacts-dir <временная>
+обучение на декабре во временную папку вне репозитория (флаг --artifacts-dir):
+WEATHER_OFFLINE=1 .venv/bin/python -m model.train --validation-month 2025-12 --artifacts-dir ...
 декабрь: MAE 0.2061, кривая 0.2146, покрытие 0.765
 
-mv model/artifacts <в сторону>; WEATHER_OFFLINE=1 .venv/bin/python -m model.train
+папка model/artifacts временно перемещена за пределы репозитория, затем:
+WEATHER_OFFLINE=1 .venv/bin/python -m model.train
 январь (48/72): MAE 0.1603, кривая 0.1765, покрытие 0.826, weather_strict: true
 md5 model_q50.joblib: новый 2060bcca8d5b0e26ab36a7a7edaa8386 = в репозитории
 
 docker compose up --build -d → /, /api/forecasts.csv, /api/journal.md, /api/validation: 200;
 POST /api/run?issue_date=abc: 400
 ```
+
+## Проверка Docker-команд README на `3aae21c` (17:13–17:19)
+
+Чистое скачивание во временную папку, без `.env`. Команды дословно из README, раздел «Как проверить».
+
+```
+docker compose up --build -d
+docker compose exec -T -e WEATHER_STRICT=1 -e WEATHER_OFFLINE=1 app python -m pytest -q -s tests
+6 passed in 89.36s
+docker compose exec -T -e WEATHER_STRICT=1 -e WEATHER_OFFLINE=1 app python -m agent.run --from 2026-01-31 --to 2026-02-28
+Готово: 29 дней, файлы в output/forecasts, журнал output/journal.md   (на хосте 29 файлов)
+docker compose exec -T -e WEATHER_STRICT=1 -e WEATHER_OFFLINE=1 app python -m model.train --validation-month 2025-12 --artifacts-dir output/check_december_strict
+Готово за 96.8 с; декабрь: MAE 0.2041, кривая 0.2146, persistence 0.3755
+docker compose exec -T -e WEATHER_STRICT=0 -e WEATHER_OFFLINE=1 app python -m model.train --artifacts-dir output/check_january_lead24
+Готово за 88.2 с; январь 24/48: MAE 0.1436, кривая 0.1582
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/forecasts.csv
+200
+```
+
+Сравнение 29 CSV этого контейнерного прогона с прогоном на macOS (16:39, те же веса, md5 `model_q50.joblib`
+совпадает): отличаются 106 строк из 2 784; 178 значений квантилей, медиана расхождения 0,0067, 56 значений
+больше 0,01, десять больше 0,05, максимум 0,0852 (p50); в двух строках сменился флаг `confidence`. Объёмы,
+даты, упреждения {48, 72} и `weather_run_time` совпадают. Общий md5 CSV контейнерного прогона
+`807bdc7e10f0fac5355e957222f4f986` против `12d95fdf2bc0a5dbdfcd69813116b26e` на macOS, поэтому md5 сравним
+только внутри одной платформы. Декабрь в контейнере: MAE 0.2041 против 0,2061 на macOS; md5 весов сравнительной модели, обученной в контейнере, не совпал с `model/artifacts_lead24/` (обучение на другой платформе).
