@@ -296,7 +296,16 @@ def validation():
         rows = jsonable(df.astype(object).where(df.notna(), None).to_dict("records"))
     report_path = Path(ARTIFACTS) / "report.md"
     report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
-    return {"metrics": metrics, "rows": rows, "report": report}
+    # Независимый тест на другом месяце (обучение до него): model/artifacts_dec2025/metrics.json, если есть.
+    extra = {}
+    for name in ("artifacts_dec2025",):
+        extra_path = Path("model") / name / "metrics.json"
+        if extra_path.exists():
+            try:
+                extra[name] = json.loads(extra_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                log.warning("Не удалось прочитать %s: %s", extra_path, exc)
+    return {"metrics": metrics, "rows": rows, "report": report, "extra": extra}
 
 
 @app.post("/api/ask")

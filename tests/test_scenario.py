@@ -18,9 +18,13 @@ import pandas as pd
 import pytest
 
 ISSUE_DATE = "2026-02-05"
+TZ = "Asia/Almaty"                           # как common.config.TZ
 SLICE_START = "2025-11-02"                   # 90 дней до 2026-01-31
-EXPECTED_COLUMNS = ["issue_date", "target_time", "lead_hours", "turbine", "ws100_forecast",
-                    "temp_forecast", "p10", "p50", "p90", "confidence", "note"]
+EXPECTED_COLUMNS = ["issue_date", "target_time", "lead_hours", "issue_timestamp", "weather_lead_hours",
+                    "weather_run_time", "turbine", "ws100_forecast", "temp_forecast", "p10", "p50", "p90",
+                    "confidence", "note"]
+NUMERIC_COLUMNS = ["lead_hours", "weather_lead_hours", "turbine", "ws100_forecast", "temp_forecast",
+                   "p10", "p50", "p90"]
 EXPECTED_STEPS = ["fetch_weather", "prepare", "run_model", "save_forecast", "analyze", "write_journal"]
 ARTIFACT_FILES = ["model_q10.joblib", "model_q50.joblib", "model_q90.joblib", "metrics.json"]
 SKIP_TRAIN = "model.train пока не принимает срез и папку артефактов"
@@ -96,10 +100,47 @@ def test_run_day_forecast(scenario):
     assert len(df) == 96, f"ожидалось 96 строк, получено {len(df)}"
     assert list(df.columns) == EXPECTED_COLUMNS, f"колонки не по контракту: {list(df.columns)}"
     assert (df["issue_date"].astype(str) == ISSUE_DATE).all()
+
+    # Числовые колонки: ни пропусков, ни нечисловых значений.
+    for col in NUMERIC_COLUMNS:
+        bad = pd.to_numeric(df[col], errors="coerce").isna()
+        assert not bad.any(), f"{col}: пропуски или нечисловые значения в строках {list(df.index[bad])[:5]}"
+
     assert df["turbine"].value_counts().to_dict() == {1: 48, 2: 48}
-    for turbine, part in df.groupby("turbine"):
-        assert sorted(part["lead_hours"].astype(int)) == list(range(24, 72)), f"турбина {turbine}: часы не 24..71"
-        assert part["target_time"].nunique() == 48
+    assert not df.duplicated(["turbine", "target_time"]).any(), "пары (turbine, target_time) повторяются"
+    assert len(df[["turbine", "target_time"]].drop_duplicates()) == 96, "уникальных пар (turbine, target_time) не 96"
+
+    target = pd.to_datetime(df["target_time"], utc=True).dt.tz_convert(TZ)
+    issue_ts = pd.to_datetime(df["issue_timestamp"], utc=True)
+    run_time = pd.to_datetime(df["weather_run_time"], utc=True)
+    w_lead = pd.to_numeric(df["weather_lead_hours"], errors="coerce")
+    for col, parsed in (("target_time", target), ("issue_timestamp", issue_ts), ("weather_run_time", run_time)):
+        assert parsed.notna().all(), f"{col}: есть нечитаемые даты"
+
+    day1 = pd.Timestamp(ISSUE_DATE, tz=TZ) + pd.Timedelta(days=1)
+    expected_hours = pd.date_range(day1, periods=48, freq="h", tz=TZ)
+    for turbine in (1, 2):
+        mask = df["turbine"].astype(int) == turbine
+        got = pd.DatetimeIndex(target[mask].sort_values().values).tz_localize("UTC").tz_convert(TZ)
+        assert got.equals(expected_hours), (f"турбина {turbine}: target_time не ряд {expected_hours[0]} … "
+                                            f"{expected_hours[-1]} по часу")
+        lead = sorted(pd.to_numeric(df.loc[mask, "lead_hours"]).astype(int))
+        assert lead == list(range(24, 72)), f"турбина {turbine}: lead_hours не 24..71"
+
+    expected_issue = pd.Timestamp(f"{ISSUE_DATE} 23:59", tz=TZ)
+    assert (issue_ts == expected_issue).all(), f"issue_timestamp не {expected_issue.isoformat()}: {set(df['issue_timestamp'])}"
+
+    is_day1 = target < day1 + pd.Timedelta(days=1)
+    expected_w_lead = pd.Series(48, index=df.index).where(~is_day1, 24)
+    wrong = w_lead != expected_w_lead
+    assert not wrong.any(), f"weather_lead_hours не 24 для D+1 и 48 для D+2: строки {list(df.index[wrong])[:5]}"
+    expected_run = target.dt.tz_convert("UTC") - pd.to_timedelta(w_lead, unit="h")
+    wrong = run_time != expected_run
+    assert not wrong.any(), (f"weather_run_time != target_time − weather_lead_hours: "
+                             f"{df.loc[wrong, ['target_time', 'weather_lead_hours', 'weather_run_time']].head(3).to_dict('records')}")
+    late = run_time > issue_ts
+    assert not late.any(), (f"weather_run_time позже issue_timestamp: "
+                            f"{df.loc[late, ['target_time', 'weather_run_time', 'issue_timestamp']].head(3).to_dict('records')}")
 
     q = df[["p10", "p50", "p90"]].astype(float)
     assert q.notna().all().all(), "в p10/p50/p90 есть пропуски"

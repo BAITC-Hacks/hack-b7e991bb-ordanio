@@ -78,6 +78,8 @@ def run_day(issue_date: str, previous_forecast: pd.DataFrame | None = None, *,
 
     step = _Step(result, "run_model")
     forecast = tools.run_model(features)
+    # Упреждение погоды (24/48 ч) и момент её расчёта по часам: из колонки source погодного ряда.
+    forecast = tools.attach_weather_lead(issue_date, forecast, weather)
     step.done("p10/p50/p90 по часам, сумма p50: " + ", ".join(
         f"турбина {t} {forecast[forecast['turbine'] == t]['p50'].sum():.2f}" for t in features))
 
