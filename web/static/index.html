@@ -6,68 +6,105 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Прогноз выработки ВЭС</title>
 <style>
+  /* Единая система: цвета, шкала размеров, отступы, радиусы. Шрифт системный, без загрузок. */
   :root {
     --bg: #f6f7f9;
     --card: #ffffff;
     --text: #1d2330;
     --muted: #5d6675;
     --line: #dde1e7;
+    --line-soft: #edf0f3;
     --accent: #1f5fbf;
     --accent-dark: #174a96;
+    --accent-soft: #eef3fb;
     --band: #1f5fbf;
     --low: #d9480f;
-    --ok: #2b8a3e;
-    --warn: #b7791f;
     --err: #c92a2a;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --fs-title: 26px;   /* заголовок страницы и крупные числа */
+    --fs-h2: 19px;      /* заголовки блоков */
+    --fs-h3: 16px;      /* подзаголовки внутри блоков */
+    --fs-body: 15px;    /* основной текст */
+    --fs-small: 13px;   /* подписи, таблицы, легенды */
+    --lh: 1.5;
+    --lh-tight: 1.3;
+    --radius: 8px;      /* карточки-блоки */
+    --radius-sm: 6px;   /* элементы внутри блоков */
+    --pad: 18px 20px;   /* внутренний отступ блока */
+    --gap: 16px;        /* расстояние между блоками */
+    --control-h: 36px;  /* высота кнопок и полей */
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font);
+    font-size: var(--fs-body);
+    line-height: var(--lh);
   }
+  button, input, textarea, select { font-family: var(--font); font-size: var(--fs-body); line-height: var(--lh); }
   main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 26px; margin: 0 0 8px; }
-  h2 { font-size: 19px; margin: 0 0 12px; }
-  h3 { font-size: 16px; margin: 16px 0 8px; }
-  section {
+  h1, h2, h3, h4 { line-height: var(--lh-tight); font-weight: 600; }
+  h1 { font-size: var(--fs-title); margin: 0 0 6px; }
+  h2 { font-size: var(--fs-h2); margin: 0 0 12px; }
+  h3 { font-size: var(--fs-h3); margin: 16px 0 8px; }
+  h4 { font-size: var(--fs-body); margin: 0 0 6px; }
+  p { margin: 12px 0 0; }
+
+  /* Все блоки одной ширины, с одинаковыми отступами, рамкой и радиусом */
+  section, .summary-card {
     background: var(--card);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 18px 20px;
-    margin-top: 16px;
+    border-radius: var(--radius);
+    padding: var(--pad);
+    margin-top: var(--gap);
   }
   .muted { color: var(--muted); }
-  .small { font-size: 13px; }
-  .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .small { font-size: var(--fs-small); }
+  .tagline { color: var(--muted); }
+
+  /* Строка статуса */
+  .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   .pill {
     display: inline-block; padding: 3px 10px; border-radius: 999px;
-    border: 1px solid var(--line); background: #fafbfc; font-size: 13px;
+    border: 1px solid var(--line); background: #fafbfc; font-size: var(--fs-small);
   }
   .pill.ok { border-color: #b2dfbd; background: #ebf7ee; color: #1e6b31; }
   .pill.warn { border-color: #f0d48a; background: #fdf6e3; color: #7a5410; }
   .pill.err { border-color: #f1b0b0; background: #fdecec; color: #9b1c1c; }
+
+  /* Поля и кнопки: одна высота, один радиус, один шрифт */
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
   label { font-weight: 600; }
-  input[type=date], textarea {
-    font: inherit; padding: 6px 8px; border: 1px solid #b9c0cb; border-radius: 6px; background: #fff;
+  input[type=date] {
+    height: var(--control-h); padding: 0 10px;
+    border: 1px solid #b9c0cb; border-radius: var(--radius-sm); background: #fff; color: var(--text);
+  }
+  textarea {
+    width: 100%; min-height: 70px; resize: vertical; padding: 8px 10px;
+    border: 1px solid #b9c0cb; border-radius: var(--radius-sm); background: #fff; color: var(--text);
   }
   button {
-    font: inherit; padding: 7px 16px; border-radius: 6px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    height: var(--control-h); padding: 0 16px; border-radius: var(--radius-sm);
     border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: background-color .15s, color .15s;
   }
-  button:hover:not(:disabled) { background: var(--accent-dark); }
+  button:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); }
   button.secondary { background: #fff; color: var(--accent); }
-  button.secondary:hover:not(:disabled) { background: #eef3fb; }
+  button.secondary:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-dark); border-color: var(--accent-dark); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   a { color: var(--accent); }
+
+  /* Сообщения */
   .error {
     color: var(--err); background: #fdecec; border: 1px solid #f1b0b0;
-    border-radius: 6px; padding: 8px 12px; margin-top: 12px; white-space: pre-wrap;
+    border-radius: var(--radius-sm); padding: 8px 12px; margin-top: 12px; white-space: pre-wrap;
   }
   .info {
-    background: #eef3fb; border: 1px solid #c9d8f0; border-radius: 6px; padding: 8px 12px; margin-top: 12px;
+    background: var(--accent-soft); border: 1px solid #c9d8f0; border-radius: var(--radius-sm); padding: 8px 12px; margin-top: 12px;
   }
   .hidden { display: none !important; }
   .spinner {
@@ -78,53 +115,91 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .progress { height: 8px; background: #e7eaef; border-radius: 4px; overflow: hidden; margin-top: 8px; max-width: 480px; }
   .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-  ol.steps { margin: 0; padding-left: 22px; }
-  ol.steps li { margin-bottom: 6px; }
-  .step-name { font-weight: 600; }
-  .step-time { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .note { background: #fafbfc; border-left: 3px solid var(--accent); padding: 10px 14px; margin: 12px 0 0; }
+
+  /* Шаги агента: лента с временем слева, линией и точками */
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li {
+    position: relative;
+    display: grid; grid-template-columns: 64px 36px minmax(0, 1fr) auto; column-gap: 0;
+    padding-bottom: 12px;
+  }
+  ol.steps li::before {           /* линия ленты */
+    content: ""; position: absolute; left: 81px; top: 0; bottom: 0; width: 2px; background: var(--line);
+  }
+  ol.steps li:first-child::before { top: 9px; }
+  ol.steps li:last-child::before { bottom: auto; height: 9px; }
+  ol.steps li:only-child::before { display: none; }
+  ol.steps li::after {            /* точка шага */
+    content: ""; position: absolute; left: 75px; top: 3px; width: 14px; height: 14px; box-sizing: border-box;
+    border-radius: 50%; background: var(--card); border: 2px solid var(--accent);
+  }
+  .step-start { grid-column: 1; font-size: var(--fs-small); color: var(--muted); font-variant-numeric: tabular-nums; line-height: 20px; }
+  .step-name { grid-column: 3; font-weight: 600; line-height: 20px; }
+  .step-dur { grid-column: 4; padding-left: 12px; font-size: var(--fs-small); color: var(--muted); font-variant-numeric: tabular-nums; line-height: 20px; }
+  .step-summary { grid-column: 3 / 5; font-size: var(--fs-small); color: var(--muted); margin-top: 2px; }
+  .step-code { font-size: var(--fs-small); color: var(--muted); font-weight: 400; margin-left: 6px; }
+
+  /* Сводка и числа дня */
+  .note { background: #fafbfc; border-left: 3px solid var(--accent); padding: 10px 14px; margin: 12px 0 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
-  .fact { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
-  .fact h4 { margin: 0 0 6px; font-size: 14px; }
+  .fact { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; }
   .fact ul { margin: 0; padding-left: 18px; }
+
+  /* Графики */
   .chart { margin-top: 12px; }
-  .chart svg { width: 100%; height: auto; display: block; }
-  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .chart h3 { margin: 12px 0 4px; }
+  .chart svg { width: 100%; height: auto; display: block; font-family: var(--font); }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: var(--fs-small); color: var(--muted); margin-top: 6px; }
   .swatch { display: inline-block; width: 14px; height: 10px; vertical-align: 0; margin-right: 5px; }
-  .table-wrap { overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 12px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
-  th, td { padding: 5px 8px; border-bottom: 1px solid #edf0f3; text-align: left; white-space: nowrap; }
-  th { background: #f1f3f6; position: sticky; top: 0; font-weight: 600; }
+
+  /* Таблицы: зебра, закреплённая шапка внутри прокручиваемого контейнера */
+  .table-wrap {
+    overflow: auto; max-height: 520px; margin-top: 12px;
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+  }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: var(--fs-small); line-height: var(--lh); font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; white-space: nowrap; }
+  thead th { background: #f1f3f6; position: sticky; top: 0; z-index: 1; font-weight: 600; border-bottom: 1px solid var(--line); }
+  tbody tr:nth-child(even) > td, tbody tr:nth-child(even) > th { background: #f8f9fb; }
+  tbody tr:last-child > td, tbody tr:last-child > th { border-bottom: none; }
   td.num, th.num { text-align: right; }
   td.wrap { white-space: normal; min-width: 180px; }
-  tr.low td { background: #fff4ec; }
-  pre {
-    white-space: pre-wrap; word-break: break-word; background: #fafbfc; border: 1px solid var(--line);
-    border-radius: 6px; padding: 12px; font-size: 13px; max-height: 520px; overflow: auto; margin: 10px 0 0;
-  }
-  details summary { cursor: pointer; font-weight: 600; }
-  .chat-log { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-  .msg { padding: 8px 12px; border-radius: 6px; white-space: pre-wrap; max-width: 90%; }
-  .msg.user { background: #eef3fb; align-self: flex-end; }
-  .msg.assistant { background: #f3f4f6; align-self: flex-start; }
-  .msg .who { font-size: 12px; color: var(--muted); display: block; margin-bottom: 2px; }
-  textarea { width: 100%; min-height: 70px; resize: vertical; }
-  .validation-table th { position: static; }
-  .validation-table tbody th { background: #fafbfc; }
+  /* Низкая уверенность: тёплый оттенок слабее зебры плюс метка слева */
+  tbody tr.low > td { background: #fffaf5; }
+  tbody tr.low:nth-child(even) > td { background: #fbf5ef; }
+  tbody tr.low > td:first-child { box-shadow: inset 3px 0 0 #f2b48a; }
+
+  .validation-table thead th { position: static; }
+  .validation-table tbody th { font-weight: 600; }
   .validation-table th.group { text-align: center; border-left: 2px solid var(--line); }
   .validation-table .group-start { border-left: 2px solid var(--line); }
-  .summary-card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 14px 20px; margin-top: 16px;
+
+  pre {
+    white-space: pre-wrap; word-break: break-word; background: #fafbfc; border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 12px; font-size: var(--fs-small); max-height: 520px; overflow: auto; margin: 10px 0 0;
   }
+  details summary { cursor: pointer; font-weight: 600; }
+  details.report summary { color: var(--accent); text-decoration: underline; font-weight: 400; margin-top: 12px; }
+  .facts-list { margin: 12px 0 0; padding-left: 20px; }
+
+  /* Карточка главных чисел проверки */
   .summary-title { font-weight: 600; margin-bottom: 10px; }
   .summary-numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-  .summary-value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
-  .summary-label { font-size: 13px; color: var(--muted); }
+  .summary-value { font-size: var(--fs-title); font-weight: 600; font-variant-numeric: tabular-nums; line-height: var(--lh-tight); }
+  .summary-label { font-size: var(--fs-small); color: var(--muted); }
   #summary-extra { margin-top: 10px; }
-  @media (max-width: 600px) { .summary-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  .facts-list { margin: 12px 0 0; padding-left: 20px; }
-  details.report summary { color: var(--accent); text-decoration: underline; font-weight: normal; margin-top: 12px; }
+
+  /* Чат */
+  .chat-log { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 12px; border-radius: var(--radius-sm); white-space: pre-wrap; max-width: 90%; }
+  .msg.user { background: var(--accent-soft); align-self: flex-end; }
+  .msg.assistant { background: #f3f4f6; align-self: flex-start; }
+  .msg .who { font-size: var(--fs-small); color: var(--muted); display: block; margin-bottom: 2px; }
+
+  @media (max-width: 600px) {
+    :root { --pad: 14px 14px; --fs-title: 22px; }
+    .summary-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
 </style>
 </head>
 <body>
@@ -132,7 +207,7 @@
 
   <header>
     <h1>Прогноз выработки ВЭС на 48 часов</h1>
-    <div class="muted">Две ветротурбины. Прогноз показывает долю от номинальной мощности по часам: 0 — стоит, 1 — работает на полную.</div>
+    <div class="tagline">Почасовой прогноз двух ветротурбин в долях номинальной мощности: 0 — стоит, 1 — работает на полную.</div>
     <div id="status" class="status"><span class="pill">Загружаю состояние…</span></div>
     <!-- Карточка с главными числами проверки; скрыта, пока метрик нет -->
     <div id="summary-card" class="summary-card hidden">
@@ -475,11 +550,13 @@ function renderSteps(steps) {
   if (!Array.isArray(steps) || !steps.length) { show($("steps-block"), false); return; }
   for (const step of steps) {
     const title = STEP_NAMES[step.name] || step.name || "шаг";
+    // Время начала ЧЧ:ММ:СС берём из строки как есть, без пересчёта пояса
+    const started = (/T(\d{2}:\d{2}:\d{2})/.exec(String(step.started || "")) || [])[1] || "";
     const li = document.createElement("li");
-    li.innerHTML = `<span class="step-name">${escapeHtml(title)}</span>
-      <span class="step-time">(${num(step.seconds, 2)} с)</span>
-      ${step.name && STEP_NAMES[step.name] ? `<span class="muted small">${escapeHtml(step.name)}</span>` : ""}
-      <div>${escapeHtml(step.summary || "")}</div>`;
+    li.innerHTML = `<span class="step-start">${escapeHtml(started)}</span>
+      <span class="step-name">${escapeHtml(title)}${step.name && STEP_NAMES[step.name] ? `<span class="step-code">${escapeHtml(step.name)}</span>` : ""}</span>
+      <span class="step-dur">${num(step.seconds, 2)} с</span>
+      <div class="step-summary">${escapeHtml(step.summary || "")}</div>`;
     list.appendChild(li);
   }
   show($("steps-block"), true);
@@ -558,7 +635,7 @@ function renderCharts(rows) {
       .sort((a, b) => String(a.target_time).localeCompare(String(b.target_time)));
     const div = document.createElement("div");
     div.className = "chart";
-    div.innerHTML = `<h3 style="margin-bottom:4px">Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data);
+    div.innerHTML = `<h3>Турбина ${escapeHtml(t)}</h3>` + buildChartSvg(data);
     box.appendChild(div);
   }
 }
@@ -656,7 +733,7 @@ async function renderChanges(date, rows) {
   let html = "";
   for (const t of turbines) {
     const data = pairs.filter((p) => p.turbine === t).sort((a, b) => String(a.target_time).localeCompare(String(b.target_time)));
-    html += `<div class="chart"><h3 style="margin-bottom:4px">Турбина ${escapeHtml(t)}</h3>${buildChangesSvg(data)}</div>`;
+    html += `<div class="chart"><h3>Турбина ${escapeHtml(t)}</h3>${buildChangesSvg(data)}</div>`;
   }
   const changed = pairs.filter((p) => Math.abs(p.today - p.yesterday) > CHANGE_THRESHOLD).length;
   const before = pairs.reduce((sum, p) => sum + p.yesterday, 0);
@@ -908,7 +985,7 @@ function renderValidation(data) {
     <li>Дат выпуска в проверке: ${countOrDash(v.n_issue_dates)}</li>
   </ul>`;
   const extraLine = extraTestLine(get(data, "extra", "artifacts_dec2025"));
-  if (extraLine) html += `<p style="margin:10px 0 0">${escapeHtml(extraLine)}</p>`;
+  if (extraLine) html += `<p>${escapeHtml(extraLine)}</p>`;
   const verdict = validationVerdict(v);
   if (verdict) html += `<p class="note">${verdict}</p>`;
   if (data && data.report) {
