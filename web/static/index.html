@@ -211,6 +211,28 @@
   .msg.assistant { background: var(--card); align-self: flex-start; }
   .msg .who { font-size: 12px; line-height: 18px; color: var(--muted); display: block; margin-bottom: 2px; }
 
+  /* Обучение по шагам */
+  .tour-blocker { position: fixed; inset: 0; z-index: 1000; background: transparent; }
+  .tour-blocker.dark { background: rgba(32, 40, 36, .55); }
+  .tour-highlight {
+    position: relative; z-index: 1001; border-radius: var(--radius);
+    outline: 2px solid var(--accent); outline-offset: 4px;
+    box-shadow: 0 0 0 9999px rgba(32, 40, 36, .55);
+    transition: outline-color var(--t);
+  }
+  .tour-card {
+    position: fixed; z-index: 1002; width: 360px; max-width: calc(100vw - 32px);
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px;
+  }
+  .tour-counter { font-family: var(--mono); font-size: 12px; line-height: 18px; color: var(--muted); }
+  .tour-text { font-size: 15px; line-height: 22px; margin-top: 8px; }
+  .tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+  .tour-spacer { flex: 1; }
+  .tour-actions button.secondary { height: 40px; font-size: 14px; }
+  .tour-skip { border-color: transparent !important; color: var(--muted) !important; padding: 0 8px !important; }
+  @media (max-width: 640px) {
+    .tour-card { left: 0 !important; right: 0; bottom: 0 !important; top: auto !important; width: auto; max-width: none; border-radius: var(--radius) var(--radius) 0 0; }
+  }
   @media (max-width: 640px) {
     :root { --page-pad: 16px; --page-top: 24px; --section-pad: 16px; }
     h1 { font-size: 28px; line-height: 34px; }
@@ -244,6 +266,7 @@
   <div id="run-section">
     <div class="meta-row">
       <div id="status" class="status"><span class="pill">Загружаю состояние…</span></div>
+      <a href="#" id="tour-link" class="small">Как пользоваться</a>
       <button id="run-all-btn" type="button" class="secondary">Прогнать весь февраль</button>
       <details class="how">
         <summary>Как работает расчёт</summary>
@@ -283,6 +306,7 @@
     <div id="charts"></div>
 
     <!-- Что изменилось при пересчёте: сравнение с выпуском предыдущего дня на общих часах -->
+    <div id="changes-panel">
     <h3>Что изменилось при пересчёте</h3>
     <div class="muted small">Сутки после даты выпуска прогнозировались дважды: вчера (за 48 часов) и сегодня (за 24 часа). Здесь видно, насколько сегодняшний прогноз поправил вчерашний.</div>
     <div class="legend">
@@ -291,6 +315,7 @@
       <span><span class="swatch" style="background:#f08c00;opacity:.25"></span>пересчитано больше чем на 0.15</span>
     </div>
     <div id="changes"></div>
+    </div>
 
     <h3>Таблица прогноза</h3>
     <div class="row">
@@ -350,6 +375,19 @@
   <footer id="model-info" class="model-info hidden"></footer>
 
 </main>
+
+<!-- Обучение по шагам: затемнение, подсветка элемента, карточка с текстом -->
+<div id="tour-blocker" class="tour-blocker hidden"></div>
+<div id="tour-card" class="tour-card hidden" role="dialog" aria-modal="true" aria-labelledby="tour-text">
+  <div id="tour-counter" class="tour-counter"></div>
+  <div id="tour-text" class="tour-text"></div>
+  <div class="tour-actions">
+    <button id="tour-skip" type="button" class="secondary tour-skip">Пропустить</button>
+    <span class="tour-spacer"></span>
+    <button id="tour-back" type="button" class="secondary">Назад</button>
+    <button id="tour-next" type="button">Далее</button>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -1132,6 +1170,7 @@ async function loadSavedForecast(date) {
 }
 
 async function init() {
+  initTour();
   $("run-btn").addEventListener("click", runOneDay);
   $("run-all-btn").addEventListener("click", runWholePeriod);
   $("next-day-btn").addEventListener("click", runNextDay);
@@ -1156,9 +1195,138 @@ async function init() {
   });
 
   const status = await loadStatus();
-  loadValidation();
+  const validationReady = loadValidation();
   loadJournal();
-  showInitialForecast(status);
+  await showInitialForecast(status);
+  await validationReady;
+  // Обучение показываем сами только при первом заходе и только после автопоказа прогноза
+  if (!tourSeen()) startTour();
+}
+
+// ---------- обучение по шагам ----------
+const TOUR_KEY = "wind-forecast-tour-seen";
+let tourIndex = 0;
+let tourSteps = [];
+let tourTarget = null;
+
+function tourSeen() {
+  try { return localStorage.getItem(TOUR_KEY) === "1"; } catch (e) { return false; }
+}
+function markTourSeen() {
+  try { localStorage.setItem(TOUR_KEY, "1"); } catch (e) { /* хранилище недоступно — просто покажем ещё раз */ }
+}
+function visible(el) { return !!(el && el.offsetParent !== null && el.getClientRects().length); }
+
+// Шаги собираются в момент запуска: что подсвечивать, зависит от того, что сейчас есть на странице.
+function buildTourSteps() {
+  const steps = [];
+  steps.push({ el: () => $("summary-card"), text: "Качество модели проверено на январе, который не участвовал в обучении" });
+  steps.push({ el: () => document.querySelector(".controls"), text: "Выберите день выпуска, агент сам возьмёт прогноз погоды, известный в этот день" });
+  const ribbonText = "Это шаги агента с временем выполнения: погода, признаки, модель, файл, анализ, журнал";
+  steps.push({
+    el: () => (visible($("steps-block")) ? $("steps-block") : $("result-title")),
+    text: () => (visible($("steps-block")) ? ribbonText : ribbonText + ". Лента появится после нажатия «Сформировать прогноз»"),
+  });
+  steps.push({ el: () => document.querySelector("#charts .chart"), text: "Линия p50 и интервал p10–p90 по каждой турбине, оранжевым часы низкой уверенности" });
+  steps.push({ el: () => $("changes-panel"), text: "Так виден пересчёт: вчерашний прогноз с упреждением 48 ч против сегодняшнего с 24 ч" });
+  steps.push({
+    el: () => (visible($("chat-section")) ? $("chat-section") : null),
+    text: () => (visible($("chat-section"))
+      ? "Спросите агента словами, он ответит по своим данным"
+      : "Чат с агентом включается ключом OPENAI_API_KEY в .env: тогда здесь можно спросить его словами, и он ответит по своим данным"),
+  });
+  return steps;
+}
+
+function startTour() {
+  markTourSeen();
+  tourSteps = buildTourSteps();
+  tourIndex = 0;
+  show($("tour-blocker"), true);
+  show($("tour-card"), true);
+  showTourStep();
+}
+
+function endTour() {
+  clearTourTarget();
+  show($("tour-blocker"), false);
+  show($("tour-card"), false);
+  tourSteps = [];
+}
+
+function clearTourTarget() {
+  if (tourTarget) tourTarget.classList.remove("tour-highlight");
+  tourTarget = null;
+}
+
+function showTourStep() {
+  const step = tourSteps[tourIndex];
+  clearTourTarget();
+  const candidate = typeof step.el === "function" ? step.el() : step.el;
+  const el = visible(candidate) ? candidate : null;
+  // Без элемента затемняем всю страницу подложкой; с элементом затемнение даёт его тень
+  $("tour-blocker").classList.toggle("dark", !el);
+  if (el) {
+    tourTarget = el;
+    el.classList.add("tour-highlight");
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  $("tour-counter").textContent = `${tourIndex + 1} из ${tourSteps.length}`;
+  $("tour-text").textContent = typeof step.text === "function" ? step.text() : step.text;
+  $("tour-back").disabled = tourIndex === 0;
+  $("tour-next").textContent = tourIndex === tourSteps.length - 1 ? "Готово" : "Далее";
+  placeTourCard();
+  setTimeout(placeTourCard, 450);   // после плавной прокрутки
+  $("tour-next").focus({ preventScroll: true });
+}
+
+// Карточка рядом с подсвеченным элементом: снизу, сверху или в углу экрана
+function placeTourCard() {
+  const card = $("tour-card");
+  if (card.classList.contains("hidden")) return;
+  card.style.left = card.style.top = card.style.bottom = card.style.right = "";
+  if (window.innerWidth <= 640) return;   // на телефоне карточка закреплена внизу стилями
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = card.offsetWidth, h = card.offsetHeight;
+  if (!tourTarget) {
+    card.style.left = Math.round((vw - w) / 2) + "px";
+    card.style.top = Math.round((vh - h) / 2) + "px";
+    return;
+  }
+  const r = tourTarget.getBoundingClientRect();
+  const left = Math.min(Math.max(16, r.left), vw - w - 16);
+  if (vh - r.bottom >= h + 24) { card.style.left = left + "px"; card.style.top = Math.round(r.bottom + 16) + "px"; }
+  else if (r.top >= h + 24) { card.style.left = left + "px"; card.style.top = Math.round(r.top - h - 16) + "px"; }
+  else { card.style.right = "24px"; card.style.bottom = "24px"; }
+}
+
+function tourNext() {
+  if (tourIndex >= tourSteps.length - 1) { endTour(); return; }
+  tourIndex++;
+  showTourStep();
+}
+function tourBack() {
+  if (tourIndex === 0) return;
+  tourIndex--;
+  showTourStep();
+}
+
+function initTour() {
+  $("tour-next").addEventListener("click", tourNext);
+  $("tour-back").addEventListener("click", tourBack);
+  $("tour-skip").addEventListener("click", endTour);
+  $("tour-link").addEventListener("click", (e) => { e.preventDefault(); startTour(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && tourSteps.length) endTour();
+  });
+  let pending = false;
+  const onMove = () => {
+    if (pending || !tourSteps.length) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; placeTourCard(); });
+  };
+  window.addEventListener("scroll", onMove, { passive: true });
+  window.addEventListener("resize", onMove);
 }
 
 // При открытии: показать самый поздний готовый прогноз; если готовых нет, а всё готово к запуску, сделать прогноз на 28.02.
@@ -1169,13 +1337,12 @@ function showInitialForecast(status) {
     const latest = done[done.length - 1];
     $("issue-date").value = latest;
     updateButtons();
-    loadSavedForecast(latest);
-    return;
+    return loadSavedForecast(latest);
   }
   const modules = status.modules || {};
   if (status.model_ready && modules.agent && !status.training) {
     $("issue-date").value = PERIOD_END;
-    runOneDay();
+    return runOneDay();
   }
 }
 
