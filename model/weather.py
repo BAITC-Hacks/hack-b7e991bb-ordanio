@@ -28,6 +28,12 @@ def _offline() -> bool:
     return os.environ.get("WEATHER_OFFLINE", "0").strip() in ("1", "true", "yes")
 
 
+def _strict() -> bool:
+    """WEATHER_STRICT=1: строгий режим упреждения. Для D+1 берётся прогноз previous_day2 (48 ч),
+    для D+2 previous_day3 (72 ч), то есть на сутки старее, чем в обычном режиме."""
+    return os.environ.get("WEATHER_STRICT", "0").strip() in ("1", "true", "yes")
+
+
 def _cache_path(name: str) -> Path:
     return Path(WEATHER_CACHE) / f"{name}.json"
 
@@ -125,23 +131,31 @@ def get_issued_forecast(issue_date: str, horizon_hours: int = HORIZON_HOURS) -> 
     """Прогноз, известный в день issue_date (previous-runs-api): для часов issue_date+1 берётся
     previous_day1, для issue_date+2 — previous_day2. Ровно horizon_hours строк начиная с
     issue_date+1 00:00. Индекс time, колонки WEATHER_COLUMNS + lead_hours (int, часы от issue_date 00:00)
-    + source ("previous_day1"/"previous_day2") + fetched_from ("network"/"cache")."""
+    + lead_hours_weather (int, упреждение самого погодного прогноза: 24/48, в строгом режиме 48/72)
+    + source ("previous_day1"/"previous_day2", в строгом режиме "previous_day2"/"previous_day3")
+    + fetched_from ("network"/"cache").
+    При WEATHER_STRICT=1 прогноз берётся на сутки старее (previous_day2 для D+1, previous_day3 для D+2),
+    кэш в отдельных файлах issued_strict_<дата>.json; обычный режим и его кэш не меняются."""
     try:
         issue = date.fromisoformat(str(issue_date)[:10])
     except ValueError:
         raise ValueError(f"Дата выпуска прогноза должна быть в виде ГГГГ-ММ-ДД, получено: {issue_date!r}")
     if horizon_hours < 1:
         raise ValueError("Горизонт прогноза должен быть не меньше одного часа")
+    strict = _strict()
+    offset = 1 if strict else 0      # строгий режим: на сутки более старый запуск погодной модели
     n_days = int(np.ceil(horizon_hours / 24))
     first_day = issue + timedelta(days=1)
     last_day = issue + timedelta(days=n_days)
-    variables = [f"{v}_previous_day{k}" for k in range(1, n_days + 1) for v in OPEN_METEO_VARS]
+    variables = [f"{v}_previous_day{k + offset}" for k in range(1, n_days + 1) for v in OPEN_METEO_VARS]
     params = _base_params() | {"start_date": first_day.isoformat(), "end_date": last_day.isoformat(),
                                "hourly": ",".join(variables)}
-    name = f"issued_{issue.isoformat()}" if horizon_hours == HORIZON_HOURS \
-        else f"issued_{issue.isoformat()}_{horizon_hours}h"
+    prefix = "issued_strict" if strict else "issued"
+    name = f"{prefix}_{issue.isoformat()}" if horizon_hours == HORIZON_HOURS \
+        else f"{prefix}_{issue.isoformat()}_{horizon_hours}h"
     data, origin = _fetch_json(name, PREVIOUS_RUNS_URL, params)
-    log.info("Прогноз, известный %s: %s", issue.isoformat(), "из кэша" if origin == "cache" else "из сети")
+    log.info("Прогноз, известный %s%s: %s", issue.isoformat(), " (строгий режим, упреждение +24 ч)" if strict else "",
+             "из кэша" if origin == "cache" else "из сети")
 
     h = data["hourly"]
     idx = _to_local_index(h["time"], data["utc_offset_seconds"])
@@ -150,31 +164,34 @@ def get_issued_forecast(issue_date: str, horizon_hours: int = HORIZON_HOURS) -> 
 
     out = pd.DataFrame(index=target_index, columns=WEATHER_COLUMNS, dtype=float)
     out["lead_hours"] = 0
+    out["lead_hours_weather"] = 0
     out["source"] = ""
     for k in range(1, n_days + 1):
         day = issue + timedelta(days=k)
+        run = k + offset
         day_start = pd.Timestamp(day.isoformat(), tz=TZ)
         day_mask = (target_index >= day_start) & (target_index < day_start + pd.Timedelta(days=1))
         if not day_mask.any():
             continue
-        block = pd.DataFrame({col: h.get(f"{var}_previous_day{k}") for col, var in zip(WEATHER_COLUMNS, OPEN_METEO_VARS)},
+        block = pd.DataFrame({col: h.get(f"{var}_previous_day{run}") for col, var in zip(WEATHER_COLUMNS, OPEN_METEO_VARS)},
                              index=idx).astype(float)
         block = block[~block.index.duplicated(keep="first")].reindex(target_index[day_mask])
-        source = f"previous_day{k}"
+        source = f"previous_day{run}"
         if block["ws100"].isna().all():
             # Предыдущий запуск для этого дня пустой: берём архив прогнозов и честно помечаем источник.
             log.warning("previous_day%d для %s пустой, беру архив прогнозов (historical) как замену",
-                        k, day.isoformat())
+                        run, day.isoformat())
             block = get_training_weather(day.isoformat(), day.isoformat()).reindex(target_index[day_mask])
             source = "historical_forecast"
         out.loc[day_mask, WEATHER_COLUMNS] = block[WEATHER_COLUMNS].values
         out.loc[day_mask, "source"] = source
+        out.loc[day_mask, "lead_hours_weather"] = 24 * run
     issue_start = pd.Timestamp(issue.isoformat(), tz=TZ)
     out["lead_hours"] = ((out.index - issue_start) / pd.Timedelta(hours=1)).astype(int)
+    out["lead_hours_weather"] = out["lead_hours_weather"].astype(int)
     out["fetched_from"] = origin
     out[WEATHER_COLUMNS] = out[WEATHER_COLUMNS].astype(float)
     return out
-
 
 PREVIOUS_RUNS_START = "2024-03-01"   # раньше этой даты previous-runs-api отдаёт пустые значения
 
