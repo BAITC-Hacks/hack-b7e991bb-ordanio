@@ -35,10 +35,13 @@ def get_training_weather(start: str, end: str) -> pd.DataFrame:
     Индекс: time (tz Asia/Almaty). Колонки: WEATHER_COLUMNS. Запросы режутся по годам, кэшируются."""
 
 def get_issued_forecast(issue_date: str, horizon_hours: int = 48) -> pd.DataFrame:
-    """Прогноз, известный в день issue_date (previous-runs-api): для часов issue_date+1 берётся
-    previous_day1, для issue_date+2 — previous_day2. Ровно horizon_hours строк начиная с
-    issue_date+1 00:00. Индекс time, колонки WEATHER_COLUMNS + lead_hours (int, часы от issue_date 00:00)
-    + source ("previous_day1"/"previous_day2") + fetched_from ("network"/"cache")."""
+    """Прогноз, известный в день issue_date (previous-runs-api). Режим по умолчанию строгий
+    (WEATHER_STRICT не задан или 1): для часов issue_date+1 берётся previous_day2 (упреждение 48 ч),
+    для issue_date+2 — previous_day3 (72 ч); сравнительный режим WEATHER_STRICT=0: previous_day1/day2
+    (24/48 ч). Ровно horizon_hours строк начиная с issue_date+1 00:00. Индекс time, колонки
+    WEATHER_COLUMNS + lead_hours (часы от issue_date 00:00) + lead_hours_weather (24/48 или 48/72)
+    + source ("previous_dayN") + fetched_from ("network"/"cache"). Кэш: issued_<дата>.json и
+    issued_strict_<дата>.json."""
 ```
 
 ```python
@@ -59,7 +62,7 @@ def load_hourly() -> pd.DataFrame:
     ws_measured, temp_measured, n_samples (сколько 10-минутных замеров вошло, 0..6)."""
 
 def filter_training(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Убирает часы с n_samples < 4 и вероятные простои (ws_measured >= 6 м/с при power == 0
+    """Убирает часы с n_samples < 4 и вероятные простои (ws_measured >= 6 м/с при power <= 0.01
     не менее 3 часов подряд). Возвращает данные и отчёт: сколько часов убрано по каждой причине."""
 
 FEATURES = ["ws10", "ws100", "gust10", "dir_sin", "dir_cos", "temp2m", "pressure",
@@ -92,9 +95,10 @@ def build_features(weather: pd.DataFrame, turbine: int) -> pd.DataFrame:
    с ключами `mae`, `rmse`, `coverage_p10_p90`, `mean_width_p10_p90`.
 
 ```python
-def train(train_start: str | None = None, artifacts_dir: str | None = None) -> dict
-    """Полный цикл обучения, возвращает метрики. CLI зовёт с умолчаниями (TRAIN_START, ARTIFACTS).
-    Тест зовёт train(train_start="2025-11-02", artifacts_dir=<временная папка>), не трогая боевые артефакты."""
+def train(train_start: str | None = None, artifacts_dir: str | None = None, validation_month: str | None = None) -> dict
+    """Полный цикл обучения, возвращает метрики. CLI: python -m model.train [--train-start] [--artifacts-dir]
+    [--validation-month]; нестандартный месяц или строгий режим без --artifacts-dir отклоняются, чтобы не
+    затереть боевую папку. Тест зовёт train(train_start="2025-11-02", artifacts_dir=<временная папка>)."""
 def load_models(artifacts_dir: str | None = None, refresh: bool = False) -> dict
     # {"q10","q50","q90"} + кривая мощности из power_curve.joblib; кэшируется на процесс; если артефактов нет — PowerCurveModel
 def predict(features: pd.DataFrame, turbine: int, models: dict | None = None) -> pd.DataFrame

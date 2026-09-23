@@ -29,9 +29,9 @@ def _offline() -> bool:
 
 
 def _strict() -> bool:
-    """WEATHER_STRICT=1: строгий режим упреждения. Для D+1 берётся прогноз previous_day2 (48 ч),
-    для D+2 previous_day3 (72 ч), то есть на сутки старее, чем в обычном режиме."""
-    return os.environ.get("WEATHER_STRICT", "0").strip() in ("1", "true", "yes")
+    """Строгий режим упреждения, включён по умолчанию: для D+1 берётся прогноз previous_day2 (48 ч),
+    для D+2 previous_day3 (72 ч). WEATHER_STRICT=0 включает сравнительный режим 24/48 (previous_day1/day2)."""
+    return os.environ.get("WEATHER_STRICT", "1").strip().lower() not in ("0", "false", "no")
 
 
 def _cache_path(name: str) -> Path:
@@ -128,14 +128,14 @@ def get_training_weather(start: str, end: str) -> pd.DataFrame:
 
 
 def get_issued_forecast(issue_date: str, horizon_hours: int = HORIZON_HOURS) -> pd.DataFrame:
-    """Прогноз, известный в день issue_date (previous-runs-api): для часов issue_date+1 берётся
-    previous_day1, для issue_date+2 — previous_day2. Ровно horizon_hours строк начиная с
+    """Прогноз, известный в день issue_date (previous-runs-api). Ровно horizon_hours строк начиная с
     issue_date+1 00:00. Индекс time, колонки WEATHER_COLUMNS + lead_hours (int, часы от issue_date 00:00)
-    + lead_hours_weather (int, упреждение самого погодного прогноза: 24/48, в строгом режиме 48/72)
-    + source ("previous_day1"/"previous_day2", в строгом режиме "previous_day2"/"previous_day3")
+    + lead_hours_weather (int, упреждение самого погодного прогноза: 48/72, при WEATHER_STRICT=0 24/48)
+    + source ("previous_day2"/"previous_day3", при WEATHER_STRICT=0 "previous_day1"/"previous_day2")
     + fetched_from ("network"/"cache").
-    При WEATHER_STRICT=1 прогноз берётся на сутки старее (previous_day2 для D+1, previous_day3 для D+2),
-    кэш в отдельных файлах issued_strict_<дата>.json; обычный режим и его кэш не меняются."""
+    По умолчанию (строгий режим) прогноз берётся с упреждением 48/72 ч (previous_day2 для D+1,
+    previous_day3 для D+2), кэш issued_strict_<дата>.json. При WEATHER_STRICT=0 сравнительный режим 24/48
+    (previous_day1/day2), кэш issued_<дата>.json."""
     try:
         issue = date.fromisoformat(str(issue_date)[:10])
     except ValueError:
@@ -154,7 +154,7 @@ def get_issued_forecast(issue_date: str, horizon_hours: int = HORIZON_HOURS) -> 
     name = f"{prefix}_{issue.isoformat()}" if horizon_hours == HORIZON_HOURS \
         else f"{prefix}_{issue.isoformat()}_{horizon_hours}h"
     data, origin = _fetch_json(name, PREVIOUS_RUNS_URL, params)
-    log.info("Прогноз, известный %s%s: %s", issue.isoformat(), " (строгий режим, упреждение +24 ч)" if strict else "",
+    log.info("Прогноз, известный %s%s: %s", issue.isoformat(), " (строгий режим, упреждение 48/72 ч)" if strict else " (сравнительный режим 24/48 ч)",
              "из кэша" if origin == "cache" else "из сети")
 
     h = data["hourly"]

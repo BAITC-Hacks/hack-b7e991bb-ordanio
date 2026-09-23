@@ -89,7 +89,13 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
             "low_confidence, weather_source, cache, network и подобные) — переводи их в смысл. Источник погоды: "
             "cache пиши как «архив прогнозов из кэша», network — как «Open-Meteo».\n"
             "- delta_vs_previous — это сравнение с прогнозом, выпущенным днём раньше, на те же часы; если он null, "
-            "напиши, что вчерашнего прогноза для сравнения нет.\n"
+            "напиши, что вчерашнего прогноза для сравнения нет. Если он есть и hours больше 0, сравнение пиши строго "
+            "этой фразой, подставив числа: «Пересчитаны {recomputed_rows} записей ({hours} общих часа × {turbines} "
+            "турбины); в {changed_rows_over_threshold} из них изменение p50 превысило 0.15; сумма p50 за общие сутки "
+            "изменилась на {delta_energy со знаком} (было {sum_p50_prev}, стало {sum_p50_new}).»\n"
+            "- Поля weather_mode и weather_lead_values: назови режим погоды одной фразой: strict — «Режим погоды: "
+            "строгий, упреждение 48/72 ч», comparative — «Режим погоды: сравнительный, упреждение 24/48 ч», other — "
+            "«Режим погоды: упреждение <значения weather_lead_values через косую черту> ч».\n"
             "- Если error_yesterday равно null, напиши «факта за вчера нет»; иначе назови ошибку вчерашнего "
             "прогноза по факту.\n"
             "- Про пары час–турбина низкой уверенности назови их число и порог; порог словами: "
@@ -112,7 +118,7 @@ def make_note(analysis: dict, mode: str = "auto") -> tuple[str, str]:
 def template_note(analysis: dict) -> str:
     """Шаблонная сводка из чисел analysis, без сети и ключа. Даты словами, суммы с двумя знаками,
     ветер и температура с одним (исходная точность прогноза погоды), без markdown."""
-    from agent.tools import _hours_word, _ru_day, _ru_time, cutout_text
+    from agent.tools import _hours_word, _ru_day, _ru_time, cutout_text, delta_text, weather_mode_text
     days = analysis["days"]
     totals = analysis["totals"]
     w = analysis["weather"]
@@ -122,6 +128,9 @@ def template_note(analysis: dict) -> str:
         f"Ветер на высоте 100 м ожидается от {w['ws100_min']:.1f} до {w['ws100_max']:.1f} м/с, в среднем "
         f"{w['ws100_mean']:.1f} м/с; температура от {w['temp_min']:.1f} до {w['temp_max']:.1f} °C."
     )
+    mode_text = weather_mode_text(analysis)
+    if mode_text:
+        parts.append(mode_text + ".")
     check = analysis.get("weather_lead_check")
     if check:  # в журнале эта фраза уже стоит отдельной строкой; здесь она внутри предложения
         text = str(check["text"])
@@ -144,14 +153,7 @@ def template_note(analysis: dict) -> str:
     elif delta.get("hours", 0) == 0:
         parts.append("С вчерашним прогнозом общих часов нет.")
     else:
-        direction = "выросла" if delta["delta_energy"] > 0 else ("снизилась" if delta["delta_energy"] < 0 else "не изменилась")
-        changed = delta["hours_changed_over_threshold"]
-        parts.append(
-            f"По сравнению с вчерашним прогнозом на те же {delta['hours']} {_hours_word(delta['hours'])} ожидаемая "
-            f"выработка {direction}: было {delta['sum_p50_prev']:.2f}, стало {delta['sum_p50_new']:.2f} "
-            f"({delta['delta_energy']:+.2f} доли номинала × час); пар час–турбина, где оценка сдвинулась больше чем "
-            f"на 0.15: {changed}."
-        )
+        parts.append(delta_text(delta))
     low = analysis["low_confidence_count"]
     threshold = _threshold_text(analysis)
     if low == 0:

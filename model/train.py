@@ -2,6 +2,7 @@
 # самопроверка времени, проверка на месяце проверки так, как работает агент, артефакты и отчёт report.md.
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -43,7 +44,7 @@ MODEL_PARAMS = {
     "random_state": 0,
 }
 
-# Независимый тест: месяц, на котором версия модели не выбиралась, и папка с его отчётом.
+# Ретроспективная проверка: месяц, по которому версия модели не выбиралась, и папка с его отчётом.
 INDEPENDENT_TEST_MONTH = "2025-12"
 INDEPENDENT_TEST_DIR = "model/artifacts_dec2025"
 
@@ -52,7 +53,7 @@ def _strict_mode() -> bool:
     """WEATHER_STRICT=1: строгий режим погоды в model/weather.py (разбор переменной тот же). Меняет только
     get_issued_forecast, то есть проверку: на D+1 прогноз previous_day2 (48 ч), на D+2 previous_day3 (72 ч).
     Обучение от него не зависит."""
-    return os.environ.get("WEATHER_STRICT", "0").strip() in ("1", "true", "yes")
+    return os.environ.get("WEATHER_STRICT", "1").strip().lower() not in ("0", "false", "no")
 
 
 PERIOD_NAMES = {
@@ -292,17 +293,18 @@ def _ratio_sentence(model_mae, other_mae, other_name: str) -> str:
 
 
 def _independence_text(month: str) -> str:
-    """Абзац о том, где валидация, а где независимый тест."""
+    """Абзац о том, где валидация, а где ретроспективная проверка на месяце, по которому версия не выбиралась."""
     if month == INDEPENDENT_TEST_MONTH:
-        return (f"Месяц {month} это независимый тест. Версия модели, её признаки и параметры выбирались по "
+        return (f"Месяц {month} это ретроспективная проверка на месяце, по которому версия модели не выбиралась. "
+                f"Версия модели, её признаки и параметры выбирались по "
                 f"проверке на {VALIDATION_MONTH}. {month} в этом выборе не участвовал. Модель для этой проверки "
                 f"обучена заново без {month} и без {VALIDATION_MONTH}, в той же конфигурации. Проверка на "
                 f"{VALIDATION_MONTH} это валидация, её числа в {ARTIFACTS}/report.md. Из этой папки удалены "
                 "модели и validation.csv, оставлены только metrics.json и report.md.")
     if month == VALIDATION_MONTH:
-        text = (f"По {month} выбиралась версия модели, поэтому эта проверка это валидация. Независимый тест "
-                f"сделан на {INDEPENDENT_TEST_MONTH}: модель той же конфигурации обучена только на часах до этого "
-                f"месяца, и на нём версия не выбиралась. Его числа лежат в {INDEPENDENT_TEST_DIR}/report.md.")
+        text = (f"По {month} выбиралась версия модели, поэтому эта проверка это валидация. Ретроспективная "
+                f"проверка сделана на {INDEPENDENT_TEST_MONTH}: модель той же конфигурации обучена только на часах "
+                f"до этого месяца, и по нему версия не выбиралась. Его числа лежат в {INDEPENDENT_TEST_DIR}/report.md.")
         path = Path(INDEPENDENT_TEST_DIR) / "metrics.json"
         try:
             t = json.loads(path.read_text(encoding="utf-8"))["validation"]["overall"]
@@ -325,15 +327,21 @@ def write_report(path: Path, m: dict) -> None:
     strict = m.get("weather_strict", False)
     L.append("# Прогноз выработки ветростанции: как обучена модель и как она проверена\n")
     if strict:
-        L.append("Это проверка в строгом режиме (WEATHER_STRICT=1). Прогноз погоды для проверки взят на сутки "
-                 "старее, чем в основной: на D+1 с упреждением 48 ч (previous_day2), на D+2 с упреждением 72 ч "
-                 "(previous_day3). Так проверяется, что прогноз не опирается на запуск погодной модели, который "
-                 "в момент выпуска мог быть ещё недоступен. Модель та же, что в основной проверке: обучение "
-                 "строгий режим не меняет, те же данные, признаки и параметры. Давность прогноза модель видит "
-                 "как признак: 2 для D+1 и 3 для D+2. Давности 3 в обучении не было, для модели она "
-                 "равнозначна давности 2. Дни в таблицах ниже календарные: день 1 это D+1, день 2 это D+2. "
-                 f"Основная проверка в {ARTIFACTS}/report.md. Из этой папки удалены модели и validation.csv, "
-                 "оставлены только metrics.json и report.md.\n")
+        md5 = m.get("weights_md5", {})
+        L.append("Это проверка в строгом режиме упреждения (режим по умолчанию). Прогноз погоды для проверки "
+                 "взят на D+1 с упреждением 48 ч (previous_day2), на D+2 с упреждением 72 ч (previous_day3). "
+                 "Так проверяется, что прогноз не опирается на запуск погодной модели, который в момент выпуска "
+                 "мог быть ещё недоступен. Веса те же, что при сравнительной проверке 24/48 "
+                 f"(md5 model_q50.joblib = {md5.get('model_q50.joblib', 'нет')}): обучение идёт на архиве прогнозов "
+                 "и на previous_day1/day2, упреждение 72 ч в обучении не представлено, проверка идёт на нём. "
+                 "Давность прогноза модель видит как признак: 2 для D+1 и 3 для D+2; давности 3 в обучении "
+                 "не было, для модели она равнозначна давности 2. Дни в таблицах ниже календарные: день 1 это "
+                 "D+1, день 2 это D+2. Сравнительная проверка 24/48 (WEATHER_STRICT=0) лежит в папке с суффиксом "
+                 "_lead24 рядом с этой.\n")
+    else:
+        L.append("Это сравнительная проверка с упреждением 24/48 ч (WEATHER_STRICT=0: на D+1 previous_day1, на D+2 "
+                 "previous_day2). Основная проверка идёт в строгом режиме 48/72, её отчёт лежит в папке без "
+                 "суффикса _lead24.\n")
     L.append("## Метод\n")
     L.append("Задача: для каждой из двух турбин дать прогноз средней за час выработки на 48 часов вперёд, "
              "начиная с полуночи следующего дня. Выработка везде нормирована: 0 означает ноль, 1 означает "
@@ -438,9 +446,11 @@ def write_report(path: Path, m: dict) -> None:
         text = (f"Вершины двух периодов отличаются на {diff:+.2f} ч. Замер SCADA это среднее за час. Прогноз "
                 "погоды Open-Meteo дан на момент начала часа. Поэтому вершина около ±0,5 ч ожидаема сама по себе.")
         if 0.5 <= abs(diff) <= 1.5:
-            text += (" Разница между периодами близка к одному часу. Это согласуется с тем, что часы SCADA после "
-                     f"{CLOCK_CHANGE} не переводились и остались на UTC+6. Целый сдвиг в каждом периоде ищется "
-                     "по наибольшей корреляции и применяется только при заметном отрыве от нуля. Дробную часть часа сдвиг на целые часы исправить не может.\n")
+            text += (" Разница между периодами близка к одному часу. Можно предположить, что часы SCADA после "
+                     f"{CLOCK_CHANGE} не переводились и остались на UTC+6, но это неподтверждённая гипотеза: "
+                     "целый сдвиг −1 ч для периода после перевода ухудшает проверку на январе (MAE 0,1440 → 0,1489), "
+                     "а по корреляции лучший целый сдвиг 0. Целый сдвиг в каждом периоде ищется по наибольшей "
+                     "корреляции и применяется только при заметном отрыве от нуля. Дробную часть часа сдвиг на целые часы исправить не может.\n")
         else:
             text += (" Разница между периодами меньше половины часа или больше полутора часов. Признаков "
                      "непереведённых часов SCADA самопроверка не показала.\n")
@@ -622,8 +632,10 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None,
     log.info("Старт обучения: история с %s, месяц проверки %s, артефакты в %s", train_start, month, art)
     strict = _strict_mode()
     if strict:
-        log.info("Строгий режим WEATHER_STRICT=1: обучение обычное, в проверке прогноз на D+1 с упреждением "
-                 "48 ч (previous_day2), на D+2 с упреждением 72 ч (previous_day3)")
+        log.info("Строгий режим упреждения (по умолчанию): обучение обычное, в проверке прогноз на D+1 с упреждением "
+                 "48 ч (previous_day2), на D+2 с упреждением 72 ч (previous_day3); WEATHER_STRICT=0 даёт 24/48")
+    else:
+        log.info("Сравнительный режим WEATHER_STRICT=0: в проверке упреждение 24/48 ч (previous_day1/day2)")
 
     # 1. Факт турбин и фильтр.
     hourly = load_hourly()
@@ -694,6 +706,8 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None,
         joblib.dump(model, art / f"model_{name}.joblib")
     joblib.dump(curve, art / "power_curve.joblib")
     log.info("Модели и кривая мощности сохранены в %s", art)
+    weights_md5 = {f.name: hashlib.md5(f.read_bytes()).hexdigest()
+                   for f in sorted(art.glob("*.joblib"))}
 
     # 6. Проверка на месяце проверки так, как работает агент.
     forecast, val_summary = forecast_month(models, curve, month)
@@ -740,6 +754,7 @@ def train(train_start: str | None = None, artifacts_dir: str | None = None,
         "train_start": train_start,
         "validation_month": month,
         "weather_strict": strict,
+        "weights_md5": weights_md5,
         "data": data,
         "weather": weather_info,
         "time_alignment": alignment,
@@ -798,10 +813,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      f"{args.validation_month}: учиться не на чем")
     if not args.artifacts_dir.strip():
         parser.error("--artifacts-dir не может быть пустым")
-    # В строгом режиме метрики и отчёт боевой папки перезаписались бы числами строгой проверки.
-    if _strict_mode() and Path(args.artifacts_dir).resolve() == Path(ARTIFACTS).resolve():
-        parser.error(f"при WEATHER_STRICT=1 укажите --artifacts-dir, отличную от боевой {ARTIFACTS}, "
-                     "иначе отчёт основной проверки будет перезаписан строгим")
+    # Нестандартный месяц проверки или сравнительный режим 24/48 в боевой папке перезаписали бы боевые веса
+    # и отчёт до того, как проверка закончится; такой запуск отклоняется до сохранения чего-либо.
+    if Path(args.artifacts_dir).resolve() == Path(ARTIFACTS).resolve():
+        if args.validation_month != VALIDATION_MONTH:
+            parser.error(f"для месяца проверки {args.validation_month} укажите --artifacts-dir, отличную от боевой "
+                         f"{ARTIFACTS}: иначе боевые веса и отчёт будут перезаписаны")
+        if not _strict_mode():
+            parser.error(f"при WEATHER_STRICT=0 укажите --artifacts-dir, отличную от боевой {ARTIFACTS}: "
+                         "боевой отчёт ведётся в строгом режиме")
     return args
 
 

@@ -352,7 +352,7 @@ def validation():
     report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
     # Независимый тест на другом месяце (обучение до него): model/artifacts_dec2025/metrics.json, если есть.
     extra = {}
-    for name in ("artifacts_dec2025", "artifacts_strict"):
+    for name in ("artifacts_dec2025", "artifacts_strict", "artifacts_lead24"):
         extra_path = Path("model") / name / "metrics.json"
         if extra_path.exists():
             try:

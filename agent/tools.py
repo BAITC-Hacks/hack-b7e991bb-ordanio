@@ -40,8 +40,9 @@ CUTOUT_TEXT = ("принята гипотеза штатной остановк�
 # ---------------------------------------------------------------- порог ширины коридора
 
 @lru_cache(maxsize=1)
-def _width_threshold_info() -> tuple[float, str]:
-    """Порог ширины коридора и его источник ("validation" или "fallback"). Читается один раз на процесс:
+def _width_threshold_info() -> tuple[float, str, int | None]:
+    """Порог ширины коридора, его источник ("validation" или "fallback") и число строк проверки, по которым
+    он посчитан (None для запасного). Читается один раз на процесс из VALIDATION_PATH (ARTIFACTS/validation.csv):
     75-й процентиль p90 − p10 по январской проверке модели; если файла нет или он негоден, запасное 0.8."""
     reason = None
     if not os.path.exists(VALIDATION_PATH):
@@ -63,11 +64,11 @@ def _width_threshold_info() -> tuple[float, str]:
                     else:
                         log.info("Порог ширины коридора: %.2f, взят из %s (75-й процентиль p90 − p10 по %d строкам "
                                  "январской проверки модели)", value, VALIDATION_PATH, len(width))
-                        return value, "validation"
+                        return value, "validation", int(len(width))
         except Exception as exc:  # битый или пустой файл не должен ронять цикл
             reason = f"{VALIDATION_PATH} не читается ({type(exc).__name__}: {exc})"
     log.warning("Порог ширины коридора: запасное значение %.2f, %s", WIDTH_LOW_FALLBACK, reason)
-    return WIDTH_LOW_FALLBACK, "fallback"
+    return WIDTH_LOW_FALLBACK, "fallback", None
 
 
 def width_threshold() -> float:
@@ -80,15 +81,53 @@ def width_threshold_source() -> str:
     return _width_threshold_info()[1]
 
 
+def width_threshold_rows() -> int | None:
+    """Число строк январской проверки, по которым посчитан порог; None, если порог запасной."""
+    return _width_threshold_info()[2]
+
+
+def _rows_word(n: int) -> str:
+    """Склонение: 1 строка, 2 строки, 5 строк."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return "строка"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "строки"
+    return "строк"
+
+
+def _records_word(n: int) -> str:
+    """Склонение: 1 запись, 2 записи, 5 записей."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return "запись"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "записи"
+    return "записей"
+
+
+def _turbines_word(n: int) -> str:
+    """Склонение: 1 турбина, 2 турбины, 5 турбин."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return "турбина"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "турбины"
+    return "турбин"
+
+
 def threshold_text(analysis: dict) -> str:
     """Порог низкой уверенности словами, для журнала и шаблонной сводки."""
     if "width_threshold" in analysis:
         value, source = analysis["width_threshold"], analysis.get("width_threshold_source")
+        path, rows = analysis.get("width_threshold_file"), analysis.get("width_threshold_rows")
     else:  # анализ, сохранённый до появления порога в analysis: берём порог текущего процесса
-        value, source = _width_threshold_info()
+        value, source, rows = _width_threshold_info()
+        path = VALIDATION_PATH
     if source == "validation":
+        origin = f" ({path}, {rows} {_rows_word(rows)})" if path and rows is not None else ""
         width_part = (f"ширина коридора выше {value:.2f}, это верхняя четверть часов по январской "
-                      f"проверке модели")
+                      f"проверке модели{origin}")
     else:
         width_part = f"ширина коридора выше {value:.2f} (запасное значение, файла январской проверки нет)"
     return f"порог: {width_part}, либо сдвиг p50 к вчерашнему прогнозу больше {DELTA_P50_LOW}"
@@ -376,12 +415,15 @@ def analyze(issue_date: str, forecast: pd.DataFrame, previous_forecast: pd.DataF
         "low_confidence_count": len(low_hours),
         "width_threshold": threshold,
         "width_threshold_source": width_threshold_source(),
+        "width_threshold_file": VALIDATION_PATH,
+        "width_threshold_rows": width_threshold_rows(),
         "extreme_wind_hours": extreme_hours,
         "cutout_hours": cutout_hours,
         "cutout_rows": cutout_rows,
         "error_yesterday": error,
         "weather_lead_check": _weather_lead_check(issue_date, forecast),
         "weather_lead_source": weather_lead_source,
+        **_weather_mode(forecast),
     }
     log.info("Анализ: %s", analysis["weather_lead_check"]["text"])
     log.info(
@@ -608,8 +650,12 @@ def _delta_vs_previous(forecast: pd.DataFrame, previous: pd.DataFrame | None) ->
             "max_abs_delta_p50": round(float(diff.loc[idx].abs().max()), 3),
         }
     hours = int(len({k[0] for k in common}))
+    changed = int((diff.abs() > DELTA_P50_LOW).sum())
     return {
         "hours": hours,
+        "recomputed_rows": int(len(common)),                 # пар (время, турбина) в пересечении
+        "turbines": int(len({k[1] for k in common})),
+        "changed_rows_over_threshold": changed,
         "overlap_start": min(k[0] for k in common).isoformat(),
         "overlap_end": max(k[0] for k in common).isoformat(),
         "sum_p50_new": round(float(c.sum()), 3),
@@ -617,9 +663,54 @@ def _delta_vs_previous(forecast: pd.DataFrame, previous: pd.DataFrame | None) ->
         "delta_energy": round(float(diff.sum()), 3),
         "mean_delta_p50": round(float(diff.mean()), 3),
         "mean_abs_delta_p50": round(float(diff.abs().mean()), 3),
-        "hours_changed_over_threshold": int((diff.abs() > DELTA_P50_LOW).sum()),
+        "hours_changed_over_threshold": changed,
         "per_turbine": per_turbine,
     }
+
+
+def delta_text(delta: dict) -> str:
+    """Фраза сравнения с вчерашним прогнозом, общая для журнала и шаблонной сводки (есть общие записи)."""
+    rows = int(delta.get("recomputed_rows", delta["hours"] * len(TURBINES)))
+    hours = int(delta["hours"])
+    n_turb = int(delta.get("turbines", len(TURBINES)))
+    changed = int(delta.get("changed_rows_over_threshold", delta["hours_changed_over_threshold"]))
+    common = "общий" if _hours_word(hours) == "час" else "общих"
+    period = "за общие сутки" if hours == 24 else "за общие часы"
+    return (f"Пересчитаны {rows} {_records_word(rows)} ({hours} {common} {_hours_word(hours)} × {n_turb} "
+            f"{_turbines_word(n_turb)}); в {changed} из них изменение p50 превысило {DELTA_P50_LOW}; сумма p50 "
+            f"{period} изменилась на {delta['delta_energy']:+.2f} (было {delta['sum_p50_prev']:.2f}, "
+            f"стало {delta['sum_p50_new']:.2f}).")
+
+
+def _weather_mode(forecast: pd.DataFrame) -> dict:
+    """Режим погоды по данным: значения weather_lead_hours в прогнозе. {48, 72} — строгий,
+    {24, 48} — сравнительный, иначе other. Умолчание режима задаёт «Модель», агент только читает."""
+    values: list[int] = []
+    if "weather_lead_hours" in forecast.columns:
+        lead = pd.to_numeric(forecast["weather_lead_hours"], errors="coerce").dropna()
+        values = sorted({int(round(float(v))) for v in lead})
+    if set(values) == {48, 72}:
+        mode = "strict"
+    elif set(values) == {24, 48}:
+        mode = "comparative"
+    else:
+        mode = "other"
+    return {"weather_mode": mode, "weather_lead_values": values}
+
+
+def weather_mode_text(analysis: dict) -> str | None:
+    """«Режим погоды: …» для журнала и шаблонной сводки; None, если режима в analysis нет (старый анализ)."""
+    mode = analysis.get("weather_mode")
+    if mode is None:
+        return None
+    values = analysis.get("weather_lead_values") or []
+    if mode == "strict":
+        return "Режим погоды: строгий, упреждение 48/72 ч"
+    if mode == "comparative":
+        return "Режим погоды: сравнительный, упреждение 24/48 ч"
+    if not values:
+        return "Режим погоды: упреждение неизвестно"
+    return "Режим погоды: упреждение " + "/".join(str(v) for v in values) + " ч"
 
 
 def _error_yesterday(issue_date: str, previous: pd.DataFrame | None, actuals: pd.DataFrame | None) -> dict | None:
@@ -719,6 +810,10 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
                  f"({analysis['hours']} {_hours_word(analysis['hours'])}). "
                  f"Ветер на 100 м от {analysis['weather']['ws100_min']:.1f} до {analysis['weather']['ws100_max']:.1f} м/с, "
                  f"в среднем {analysis['weather']['ws100_mean']:.1f} м/с.")
+    mode_text = weather_mode_text(analysis)
+    if mode_text:
+        lines.append("")
+        lines.append(mode_text + ".")
     check = analysis.get("weather_lead_check")
     if check:
         lines.append("")
@@ -744,13 +839,7 @@ def _journal_section(issue_date: str, analysis: dict, note: str) -> str:
     elif delta.get("hours", 0) == 0:
         lines.append("Изменения к вчерашнему прогнозу: общих часов нет.")
     else:
-        lines.append(
-            f"Изменения к вчерашнему прогнозу: {delta['hours']} {'общий' if _hours_word(delta['hours']) == 'час' else 'общих'} "
-            f"{_hours_word(delta['hours'])} "
-            f"({_ru_time(delta['overlap_start'])} … {_ru_time(delta['overlap_end'])}); сумма p50 обеих турбин была "
-            f"{delta['sum_p50_prev']:.2f}, стала {delta['sum_p50_new']:.2f} ({delta['delta_energy']:+.2f}); "
-            f"пар час–турбина с изменением p50 больше {DELTA_P50_LOW}: {delta['hours_changed_over_threshold']}."
-        )
+        lines.append(delta_text(delta))
     lines.append("")
     low = analysis["low_confidence_hours"]
     if not low:

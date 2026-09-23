@@ -158,10 +158,18 @@ def test_run_day_forecast(scenario, agent_output):
     expected_issue = pd.Timestamp(f"{ISSUE_DATE} 23:59", tz=TZ)
     assert (issue_ts == expected_issue).all(), f"issue_timestamp не {expected_issue.isoformat()}: {set(df['issue_timestamp'])}"
 
+    # Упреждение погоды зависит от режима доступности (24/48 или строгий 48/72), поэтому не зашивается:
+    # у каждой турбины одно значение на все часы D+1, другое на все часы D+2, второе = первое + 24.
     is_day1 = target < day1 + pd.Timedelta(days=1)
-    expected_w_lead = pd.Series(48, index=df.index).where(~is_day1, 24)
-    wrong = w_lead != expected_w_lead
-    assert not wrong.any(), f"weather_lead_hours не 24 для D+1 и 48 для D+2: строки {list(df.index[wrong])[:5]}"
+    for turbine in (1, 2):
+        mask = df["turbine"].astype(int) == turbine
+        d1 = set(w_lead[mask & is_day1].astype(int))
+        d2 = set(w_lead[mask & ~is_day1].astype(int))
+        assert len(d1) == 1 and len(d2) == 1, (f"турбина {turbine}: weather_lead_hours не одно значение на сутки: "
+                                               f"D+1 {sorted(d1)}, D+2 {sorted(d2)}")
+        first, second = d1.pop(), d2.pop()
+        assert first in (24, 48), f"турбина {turbine}: weather_lead_hours для D+1 = {first}, ожидалось 24 или 48"
+        assert second == first + 24, f"турбина {turbine}: weather_lead_hours D+2 = {second}, ожидалось {first + 24}"
     expected_run = target.dt.tz_convert("UTC") - pd.to_timedelta(w_lead, unit="h")
     wrong = run_time != expected_run
     assert not wrong.any(), (f"weather_run_time != target_time − weather_lead_hours: "

@@ -363,10 +363,10 @@
     <!-- Что изменилось при пересчёте: сравнение с выпуском предыдущего дня на общих часах -->
     <div id="changes-panel">
     <h3>Что изменилось при пересчёте</h3>
-    <div class="muted small">Сутки после даты выпуска прогнозировались дважды: вчера (за 48 часов) и сегодня (за 24 часа). Здесь видно, насколько сегодняшний прогноз поправил вчерашний.</div>
+    <div class="muted small">Сутки после даты выпуска прогнозировались дважды: <span class="lead-yesterday">вчера</span> и <span class="lead-today">сегодня</span>. Здесь видно, насколько сегодняшний прогноз поправил вчерашний.</div>
     <div class="legend">
-      <span><span class="swatch" style="border-top:2px dashed #B8C4BE;height:0;vertical-align:3px"></span>вчерашний выпуск (упреждение 48 ч)</span>
-      <span><span class="swatch" style="background:#7FD1A8;height:3px;vertical-align:3px"></span>сегодняшний выпуск (упреждение 24 ч)</span>
+      <span><span class="swatch" style="border-top:2px dashed #B8C4BE;height:0;vertical-align:3px"></span><span class="lead-yesterday">вчера</span></span>
+      <span><span class="swatch" style="background:#7FD1A8;height:3px;vertical-align:3px"></span><span class="lead-today">сегодня</span></span>
       <span><span class="swatch" style="background:rgba(242,194,123,.45)"></span>пересчитано больше чем на 0.15</span>
       <span><span class="swatch" style="background:rgba(127,209,168,.45)"></span>сегодня выше</span>
       <span><span class="swatch" style="background:rgba(242,194,123,.45)"></span>сегодня ниже</span>
@@ -432,8 +432,8 @@
   <section id="about-section" class="about">
     <h2>О проекте</h2>
     <p><strong>Задача.</strong> Ветростанция должна каждый день заранее сообщать почасовую выработку двух турбин на завтра и послезавтра: под прогноз планируется энергосистема, а расхождение с фактом оплачивается на балансирующем рынке. Организаторы выдали три года 10-минутных замеров и попросили систему, которая сама берёт прогноз погоды, известный на момент выпуска, считает выработку и повторяет расчёт каждый день февраля 2026.</p>
-    <p><strong>Метод.</strong> Модель учится на связке «прогноз погоды на этот час → фактическая выработка», а не на измеренном ветре, и выдаёт на каждый час три оценки p10, p50, p90. Агент на день выпуска получает прогноз с упреждением 24 и 48 часов, считает 48 часов по каждой турбине, сравнивает с прогнозом предыдущего дня, отмечает часы повышенной неопределённости и ведёт журнал.</p>
-    <p><strong>Проверка.</strong> Январь 2026 в обучение не входил: MAE 0.144 доли номинала против 0.158 у кривой «ветер → мощность» и 0.365 у правила «завтра как сегодня». Ретроспективная проверка на декабре 2025 с отсечкой обучения 30 ноября: 0.196 против 0.206. Февральских фактов у нас нет, поэтому качество показано на прошлых месяцах.</p>
+    <p><strong>Метод.</strong> Модель учится на связке «прогноз погоды на этот час → фактическая выработка», а не на измеренном ветре, и выдаёт на каждый час три оценки p10, p50, p90. Агент на день выпуска получает прогноз с упреждением <span id="about-leads">48 и 72 часа</span>, считает 48 часов по каждой турбине, сравнивает с прогнозом предыдущего дня, отмечает часы повышенной неопределённости и ведёт журнал.</p>
+    <p><strong>Проверка.</strong> Январь 2026 в обучение не входил (упреждение погоды <span id="about-leads-check">48 и 72 часа</span>): MAE <span id="about-mae">0.160</span> доли номинала против <span id="about-curve">0.177</span> у кривой «ветер → мощность» и <span id="about-pers">0.365</span> у правила «завтра как сегодня». Ретроспективная проверка на декабре 2025 с отсечкой обучения 30 ноября: <span id="about-dec-mae">0.196</span> против <span id="about-dec-curve">0.206</span>. Февральских фактов у нас нет, поэтому качество показано на прошлых месяцах.</p>
   </section>
 
   <!-- Сведения о модели из status.model_info; скрыто, если их нет -->
@@ -986,6 +986,7 @@ async function renderChanges(date, rows) {
   const box = $("changes");
   const requestId = ++changesRequestId;
   lastChangesPairs = null;
+  setLeadLabels([]);
   const noPrevious = '<p class="muted">Вчерашнего выпуска нет: сравнить не с чем.</p>';
   if (!date || validateDate(date) || date <= PERIOD_START) { box.innerHTML = noPrevious; return; }
   box.innerHTML = '<p class="muted">Загружаю вчерашний выпуск…</p>';
@@ -1003,15 +1004,46 @@ async function renderChanges(date, rows) {
   // Вчерашние p50 по паре (турбина, время)
   const key = (r) => String(r.turbine) + "|" + String(r.target_time);
   const previousP50 = new Map(previousRows.map((r) => [key(r), Number(r.p50)]));
+  const previousLead = new Map(previousRows.map((r) => [key(r), r.weather_lead_hours]));
   // Сегодняшние часы суток D+1 (упреждение 24…47), у которых есть вчерашняя пара
   const pairs = rows
     .filter((r) => Number(r.lead_hours) >= 24 && Number(r.lead_hours) <= 47 && previousP50.has(key(r)))
-    .map((r) => ({ turbine: String(r.turbine), target_time: r.target_time, today: Number(r.p50), yesterday: previousP50.get(key(r)) }))
+    .map((r) => ({ turbine: String(r.turbine), target_time: r.target_time, today: Number(r.p50), yesterday: previousP50.get(key(r)),
+      leadToday: r.weather_lead_hours, leadYesterday: previousLead.get(key(r)) }))
     .filter((p) => Number.isFinite(p.today) && Number.isFinite(p.yesterday));
   if (!pairs.length) { box.innerHTML = noPrevious; return; }
 
   lastChangesPairs = pairs;
+  setLeadLabels(pairs);
   box.innerHTML = changesHtml(pairs, box);
+}
+
+let currentLeads = { yesterday: null, today: null };   // для текста шага 5 обучения
+
+// Подписи «вчера (упреждение N ч)» / «сегодня (упреждение M ч)» по weather_lead_hours общих часов (самое частое значение)
+function setLeadLabels(pairs) {
+  const common = (field) => {
+    const counts = new Map();
+    for (const p of pairs || []) {
+      const v = Number(p[field]);
+      if (p[field] !== null && p[field] !== undefined && p[field] !== "" && Number.isFinite(v)) counts.set(v, (counts.get(v) || 0) + 1);
+    }
+    let best = null, bestCount = 0;
+    for (const [v, c] of counts) if (c > bestCount) { best = v; bestCount = c; }
+    return best;
+  };
+  const y = common("leadYesterday"), t = common("leadToday");
+  currentLeads = { yesterday: y, today: t };
+  document.querySelectorAll(".lead-yesterday").forEach((el) => { el.textContent = y === null ? "вчера" : `вчера (упреждение ${y} ч)`; });
+  document.querySelectorAll(".lead-today").forEach((el) => { el.textContent = t === null ? "сегодня" : `сегодня (упреждение ${t} ч)`; });
+}
+
+// 1 запись, 2 записи, 5 записей
+function recordsWord(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "запись";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "записи";
+  return "записей";
 }
 
 function changesHtml(pairs, box) {
@@ -1026,7 +1058,8 @@ function changesHtml(pairs, box) {
   const before = pairs.reduce((sum, p) => sum + p.yesterday, 0);
   const after = pairs.reduce((sum, p) => sum + p.today, 0);
   const delta = after - before;
-  html += `<p>Пересчитано ${changed} ${hoursWord(changed)} из ${pairs.length}, сумма p50 за сутки изменилась на ${(delta > 0 ? "+" : "") + delta.toFixed(2)} (было ${before.toFixed(2)}, стало ${after.toFixed(2)})</p>`;
+  const total = pairs.length;
+  html += `<p>${total % 10 === 1 && total % 100 !== 11 ? "Пересчитана" : "Пересчитаны"} ${total} ${recordsWord(total)}; в ${changed} изменение p50 превысило 0.15; сумма изменилась на ${(delta > 0 ? "+" : "") + delta.toFixed(2)} (было ${before.toFixed(2)}, стало ${after.toFixed(2)})</p>`;
   return html;
 }
 
@@ -1155,11 +1188,27 @@ async function loadValidation() {
     box.innerHTML = renderValidation(data);
     renderSummaryCard(data);
     renderValidationBrief(data);
+    renderAboutNumbers(data);
   } catch (e) {
     box.innerHTML = `<div class="info">${escapeHtml(e.message)}</div>`;
     renderSummaryCard(null);
     renderValidationBrief(null);
   }
+}
+
+// «О проекте»: режим и числа из /api/validation; нет числа — остаётся запасное из разметки
+function renderAboutNumbers(data) {
+  const leads = MODE_LEADS[validationMode(data)];
+  $("about-leads").textContent = leads;
+  $("about-leads-check").textContent = leads;
+  const set = (id, value) => { const n = Number(value ?? NaN); if (Number.isFinite(n)) $(id).textContent = num(n); };
+  const overall = get(data, "metrics", "validation", "overall");
+  set("about-mae", get(overall, "model", "mae"));
+  set("about-curve", get(overall, "power_curve", "mae"));
+  set("about-pers", get(overall, "persistence", "mae"));
+  const dec = get(data, "extra", "artifacts_dec2025", "validation", "overall");
+  set("about-dec-mae", get(dec, "model", "mae"));
+  set("about-dec-curve", get(dec, "power_curve", "mae"));
 }
 
 // Короткая строка у графиков: январская проверка из /api/validation, со ссылкой на подробную панель.
@@ -1169,7 +1218,7 @@ function renderValidationBrief(data) {
   const model = Number(get(overall, "model", "mae") ?? NaN);
   const curve = Number(get(overall, "power_curve", "mae") ?? NaN);
   if (!Number.isFinite(model)) { show(el, false); return; }
-  el.innerHTML = `Январская проверка: MAE <span class="v">${num(model)}</span>` +
+  el.innerHTML = `Январская проверка (${validationMode(data)}): MAE <span class="v">${num(model)}</span>` +
     (Number.isFinite(curve) ? ` · базовая кривая <span class="v">${num(curve)}</span>` : "") +
     ` · февральских фактов пока нет · <a href="#validation-section">подробнее</a>`;
   show(el, true);
@@ -1183,22 +1232,23 @@ function renderSummaryCard(data) {
   const modelMae = value("model", "mae");
   if (!overall || !Number.isFinite(modelMae)) { show(card, false); return; }
   const coverage = value("model", "coverage_p10_p90");
+  const mode = validationMode(data);
   const items = [
-    [num(modelMae), "MAE модели", "средняя ошибка по часу, доля номинала"],
-    [num(value("power_curve", "mae")), "MAE кривой мощности", "прогноз только по скорости ветра"],
+    [num(modelMae), `MAE модели (${mode})`, "средняя ошибка по часу, доля номинала"],
+    [num(value("power_curve", "mae")), `MAE кривой мощности (${mode})`, "прогноз только по скорости ветра"],
     [num(value("persistence", "mae")), "MAE persistence", "«завтра как сегодня»"],
-    [Number.isFinite(coverage) ? (coverage * 100).toFixed(1) + " %" : "—", "Покрытие p10–p90", "часов, где факт внутри коридора, цель 80 %"],
+    [Number.isFinite(coverage) ? (coverage * 100).toFixed(1) + " %" : "—", `Покрытие p10–p90 (${mode})`, "часов, где факт внутри коридора, цель 80 %"],
   ];
   $("summary-numbers").innerHTML = items.map(([v, label, hint]) =>
     `<div><div class="summary-value">${v}</div><div>${label}</div><div class="summary-label">${hint}</div></div>`).join("");
 
-  // Подпись про независимый декабрьский тест, если он есть
+  // Подпись про ретроспективную проверку на декабре, если она есть
   const extra = get(data, "extra", "artifacts_dec2025");
   const extraModel = Number(get(extra, "validation", "overall", "model", "mae") ?? NaN);
   const extraCurve = Number(get(extra, "validation", "overall", "power_curve", "mae") ?? NaN);
-  const year = (/^(\d{4})/.exec(String(get(extra, "validation_month") || "")) || [])[1];
-  if (year && Number.isFinite(extraModel) && Number.isFinite(extraCurve)) {
-    $("summary-extra").textContent = `Независимый тест на декабре ${year}: ${num(extraModel)} против ${num(extraCurve)}`;
+  const head = retroHead(get(extra, "validation_month"), mode);
+  if (head && Number.isFinite(extraModel) && Number.isFinite(extraCurve)) {
+    $("summary-extra").textContent = `${head}: ${num(extraModel)} против ${num(extraCurve)}`;
     show($("summary-extra"), true);
   } else {
     show($("summary-extra"), false);
@@ -1318,10 +1368,22 @@ function validationVerdict(v) {
   return text + ".";
 }
 
-// Строка про независимый тест на другом месяце (extra.artifacts_dec2025). Нет данных — пустая строка.
+// «Ретроспективная проверка на декабре 2025 (режим 24/48, отсечка обучения 30.11)»: месяц из validation_month,
+// отсечка — последний день предыдущего месяца. Нет месяца — пустая строка.
+function retroHead(validationMonth, mode) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(validationMonth || ""));
+  if (!m) return "";
+  const year = Number(m[1]), monthIndex = Number(m[2]) - 1;
+  if (!(monthIndex >= 0 && monthIndex < 12)) return "";
+  const cutoff = new Date(Date.UTC(year, monthIndex, 0));   // последний день предыдущего месяца
+  const dd = String(cutoff.getUTCDate()).padStart(2, "0"), mm = String(cutoff.getUTCMonth() + 1).padStart(2, "0");
+  return `Ретроспективная проверка на ${MONTHS_RU_PREP[monthIndex]} ${year} (${mode ? "режим " + mode + ", " : ""}отсечка обучения ${dd}.${mm})`;
+}
+
+// Строка про ретроспективную проверку на другом месяце (extra.artifacts_dec2025). Нет данных — пустая строка.
 const MONTHS_RU_PREP = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
 
-function extraTestLine(extraMetrics) {
+function extraTestLine(extraMetrics, mode) {
   const overall = get(extraMetrics, "validation", "overall");
   const m = /^(\d{4})-(\d{2})/.exec(String(get(extraMetrics, "validation_month") || ""));
   if (!overall || !m) return "";
@@ -1333,12 +1395,11 @@ function extraTestLine(extraMetrics) {
   const curve = value("power_curve", "mae");
   const persistence = value("persistence", "mae");
   const coverage = value("model", "coverage_p10_p90");
-  const trainedUntil = MONTHS_RU[(monthIndex + 11) % 12];
-  let text = `Независимый тест на ${MONTHS_RU_PREP[monthIndex]} ${m[1]} (обучение по ${trainedUntil}): MAE модели ${num(model)}`;
+  let text = `${retroHead(get(extraMetrics, "validation_month"), mode)}: MAE модели ${num(model)}`;
   if (Number.isFinite(curve)) text += `, кривая ${num(curve)}`;
   if (Number.isFinite(persistence)) text += `, persistence ${num(persistence)}`;
   if (Number.isFinite(coverage)) text += `, покрытие ${(coverage * 100).toFixed(1)} %`;
-  return text + ".";
+  return text;
 }
 
 // Строгий режим доступности погоды (extra.artifacts_strict). Нет MAE модели — строки нет.
@@ -1354,22 +1415,45 @@ function strictTestLine(strict) {
   return text;
 }
 
+// Режим погоды основных метрик: есть extra.artifacts_lead24 — основной 48/72, иначе 24/48.
+function validationMode(data) {
+  return get(data, "extra", "artifacts_lead24") ? "48/72" : "24/48";
+}
+const MODE_LEADS = { "48/72": "48 и 72 часа", "24/48": "24 и 48 часов" };
+
+// Строка сравнительного режима 24/48 из extra.artifacts_lead24
+function lead24Line(metrics) {
+  const overall = get(metrics, "validation", "overall");
+  const model = Number(get(overall, "model", "mae") ?? NaN);
+  if (!Number.isFinite(model)) return "";
+  const curve = Number(get(overall, "power_curve", "mae") ?? NaN);
+  const coverage = Number(get(overall, "model", "coverage_p10_p90") ?? NaN);
+  let text = `Сравнительный режим 24/48: MAE ${num(model)}`;
+  if (Number.isFinite(curve)) text += `, кривая ${num(curve)}`;
+  if (Number.isFinite(coverage)) text += `, покрытие ${(coverage * 100).toFixed(1)} %`;
+  return text;
+}
+
 function renderValidation(data) {
   const metrics = (data && data.metrics) || {};
   const v = metrics.validation || {};
   const d = metrics.data || {};
 
-  let html = validationTable(v);
+  const mode = validationMode(data);
+  let html = `<p class="small muted" style="margin:12px 0 0">режим ${mode}, основной</p>` + validationTable(v);
   html += `<ul class="facts-list">
     <li>Обучающих примеров: ${countOrDash(d.train_rows)}</li>
     <li>Убрано неполных часов: ${countOrDash(d.removed_incomplete_hours)}, часов простоя: ${countOrDash(d.removed_downtime_hours)}</li>
     <li>Месяц проверки ${formatMonth(metrics.validation_month)} в обучение не входил</li>
     <li>Дат выпуска в проверке: ${countOrDash(v.n_issue_dates)}</li>
   </ul>`;
-  const extraLine = extraTestLine(get(data, "extra", "artifacts_dec2025"));
+  const extraLine = extraTestLine(get(data, "extra", "artifacts_dec2025"), mode);
   if (extraLine) html += `<p>${escapeHtml(extraLine)}</p>`;
-  const strictLine = strictTestLine(get(data, "extra", "artifacts_strict"));
-  if (strictLine) html += `<p>${escapeHtml(strictLine)}</p>`;
+  // Вторая строка: сравнительный 24/48, если основной уже строгий; иначе строгий режим
+  const otherLine = mode === "48/72"
+    ? lead24Line(get(data, "extra", "artifacts_lead24"))
+    : strictTestLine(get(data, "extra", "artifacts_strict"));
+  if (otherLine) html += `<p>${escapeHtml(otherLine)}</p>`;
   const verdict = validationVerdict(v);
   if (verdict) html += `<p class="note">${verdict}</p>`;
   if (data && data.report) {
@@ -1536,7 +1620,12 @@ function buildTourSteps() {
     text: () => (visible($("steps-block")) ? ribbonText : ribbonText + ". Лента появится после нажатия «Сформировать прогноз»"),
   });
   steps.push({ el: () => document.querySelector("#charts .chart"), text: "Линия p50 и интервал p10–p90 по каждой турбине, янтарным часы низкой уверенности" });
-  steps.push({ el: () => $("changes-panel"), text: "Так виден пересчёт: вчерашний прогноз с упреждением 48 ч против сегодняшнего с 24 ч" });
+  steps.push({
+    el: () => $("changes-panel"),
+    text: () => (currentLeads.yesterday !== null && currentLeads.today !== null
+      ? `Так виден пересчёт: вчерашний прогноз с упреждением ${currentLeads.yesterday} ч против сегодняшнего с ${currentLeads.today} ч`
+      : "Так виден пересчёт: вчерашний прогноз против сегодняшнего"),
+  });
   steps.push({
     el: () => (visible($("chat-section")) ? $("chat-section") : null),
     text: () => (visible($("chat-section"))
