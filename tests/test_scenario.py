@@ -64,20 +64,46 @@ def slice_training(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def scenario(slice_training):
-    """Один прогон run_day на дату из тестового периода. Если срез обучен, агент работает на его моделях
-    (подставляются в кэш model.predict на время сессии); иначе как в бою: артефакты или PowerCurveModel."""
+def agent_output(tmp_path_factory):
+    """Временная папка вместо output/: туда агент пишет прогноз, итог дня и журнал во время теста.
+    Вчерашний прогноз (если есть в боевой папке) копируется, чтобы сравнение с ним тоже работало."""
+    import shutil
+    from agent import tools
+
+    out = tmp_path_factory.mktemp("output")
+    paths = {"FORECASTS_DIR": out / "forecasts", "RUNS_DIR": out / "runs", "JOURNAL_PATH": out / "journal.md"}
+    paths["FORECASTS_DIR"].mkdir()
+    paths["RUNS_DIR"].mkdir()
+    prev_date = (pd.Timestamp(ISSUE_DATE) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    prev = Path(tools.FORECASTS_DIR) / f"forecast_{prev_date}.csv"
+    if prev.exists():
+        shutil.copy2(prev, paths["FORECASTS_DIR"] / prev.name)
+    with pytest.MonkeyPatch.context() as mp:
+        for name, path in paths.items():
+            mp.setattr(tools, name, str(path))
+        yield paths
+
+
+@pytest.fixture(scope="session")
+def scenario(slice_training, agent_output):
+    """Один прогон run_day на дату из тестового периода, вывод во временную папку (output/ не трогается).
+    Если срез обучен, агент работает на его моделях (подставляются в кэш model.predict на время сессии);
+    иначе как в бою: артефакты или PowerCurveModel."""
     from model import predict as predict_module
     from agent.run import run_day
 
     out_dir, _ = slice_training
-    saved = predict_module._MODELS_CACHE
+    slice_models = None
     if out_dir is not None:
-        predict_module._MODELS_CACHE = predict_module.load_models(str(out_dir))
+        slice_models = predict_module.load_models(str(out_dir))
+        predict_module._MODELS_CACHE = slice_models
     try:
         yield run_day(ISSUE_DATE)
     finally:
-        predict_module._MODELS_CACHE = saved
+        # Кэш процесса возвращается на боевые model/artifacts: временные модели в нём не остаются.
+        predict_module.load_models(refresh=True)
+        if slice_models is not None:
+            assert predict_module._MODELS_CACHE is not slice_models, "кэш моделей остался на срезе"
 
 
 def test_train_on_slice(slice_training):
@@ -89,11 +115,12 @@ def test_train_on_slice(slice_training):
     assert isinstance(info, dict), "train должен возвращать словарь метрик"
 
 
-def test_run_day_forecast(scenario):
+def test_run_day_forecast(scenario, agent_output):
     result = scenario
     assert result.issue_date == ISSUE_DATE
     path = Path(result.forecast_path)
     assert path.exists(), f"файла прогноза нет: {path}"
+    assert path.resolve().parent == agent_output["FORECASTS_DIR"].resolve(), f"прогноз записан не во временную папку: {path}"
     assert path.name == f"forecast_{ISSUE_DATE}.csv"
 
     df = pd.read_csv(path, keep_default_na=False)
@@ -157,7 +184,8 @@ def test_run_day_forecast(scenario):
     assert positions == sorted(positions), f"шаги не по порядку: {names}"
     for s in result.steps:
         assert {"name", "started", "finished", "summary"} <= set(s), f"у шага {s.get('name')} не все поля"
-    assert (ROOT / "output" / "runs" / f"{ISSUE_DATE}.json").exists()
+    assert (agent_output["RUNS_DIR"] / f"{ISSUE_DATE}.json").exists(), "итог дня не записан во временную папку"
+    assert agent_output["JOURNAL_PATH"].exists(), "журнал не записан во временную папку"
 
 
 @pytest.mark.parametrize("bad", ["2026-03-05", "abc", ""])
