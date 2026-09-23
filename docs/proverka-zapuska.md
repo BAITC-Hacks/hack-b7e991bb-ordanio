@@ -53,7 +53,7 @@ WEATHER_OFFLINE=1 .venv/bin/python -m agent.run --from 2026-01-31 --to 2026-02-2
 ls output/forecasts | wc -l
 29
 grep -c "не позже момента выпуска" output/journal.md
-29   (по одной строке на выпуск; формулировка в текущей версии: «По номинальному упреждению все значения
+58   (две строки на выпуск; формулировка в текущей версии: «По номинальному упреждению все значения
      погоды рассчитаны не позже момента выпуска …»)
 ```
 
@@ -100,4 +100,38 @@ md5 model_q50.joblib: новый 2060bcca8d5b0e26ab36a7a7edaa8386, в репоз
 .venv/bin/python -m agent.run --date abc
 Ошибка входных данных: Дата «abc» не в формате ГГГГ-ММ-ДД, например 2026-02-05.
 (код выхода 2)
+```
+
+## Финальный прогон на замороженном коммите (16:39–16:41)
+
+```
+git log --oneline -1
+f2e91a4 Основной режим погоды 48/72 (строгий): умолчание, артефакты и проверки января и декабря, ...
+Python 3.12.14
+
+WEATHER_OFFLINE=1 .venv/bin/python -m pytest -q -s tests
+6 passed in 40.38s   (PASS печатается; output/ после теста пустой)
+
+WEATHER_OFFLINE=1 .venv/bin/python -m agent.run --from 2026-01-31 --to 2026-02-28
+Готово: 29 дней, файлы в output/forecasts, журнал output/journal.md
+файлов 29, строк 2784, в феврале 2640, уникальных пар час–турбина в феврале 1344, за 1–2 марта 144,
+упреждения {48, 72}, weather_run_time <= issue_timestamp во всех строках: True
+md5 всех CSV: 12d95fdf2bc0a5dbdfcd69813116b26e (совпадает с прогоном прораба в 16:33)
+журнал: «Режим погоды: строгий, упреждение 48/72 ч.» в каждом разделе
+
+Два последовательных выпуска 04.02 и 05.02: общих записей 48, упреждение погоды вчера 72 ч,
+сегодня 48 ч, изменение p50 больше 0.15 в 8 записях.
+
+WEATHER_STRICT=0 WEATHER_OFFLINE=1 .venv/bin/python -m agent.run --date 2026-02-05
+упреждения в CSV: {24, 48}
+
+WEATHER_OFFLINE=1 .venv/bin/python -m model.train --validation-month 2025-12 --artifacts-dir <временная>
+декабрь: MAE 0.2061, кривая 0.2146, покрытие 0.765
+
+mv model/artifacts <в сторону>; WEATHER_OFFLINE=1 .venv/bin/python -m model.train
+январь (48/72): MAE 0.1603, кривая 0.1765, покрытие 0.826, weather_strict: true
+md5 model_q50.joblib: новый 2060bcca8d5b0e26ab36a7a7edaa8386 = в репозитории
+
+docker compose up --build -d → /, /api/forecasts.csv, /api/journal.md, /api/validation: 200;
+POST /api/run?issue_date=abc: 400
 ```
